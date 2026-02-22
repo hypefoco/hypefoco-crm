@@ -490,9 +490,6 @@ const usePersistedState = (key, defaultValue, user) => {
   }, [user?.id, key]);
 
   return [data, updateData, isLoading, saveStatus];
-  }, [user?.id, data]);
-
-  return [data, updateData, isLoading, isSaving];
 };
 
 // Componentes de UI reutilizáveis
