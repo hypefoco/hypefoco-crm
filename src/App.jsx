@@ -435,8 +435,9 @@ const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user,
   ];
 
   return (
-    <div className={`${isCollapsed ? 'w-16' : 'w-64'} bg-gray-950 text-white min-h-screen p-4 flex flex-col border-r border-gray-800 transition-all duration-300`}>
-      <div className={`mb-6 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
+    <div className={`${isCollapsed ? 'w-16' : 'w-64'} bg-gray-950 text-white h-screen sticky top-0 flex flex-col border-r border-gray-800 transition-all duration-300`}>
+      {/* Header do Sidebar */}
+      <div className={`p-4 mb-2 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
         {!isCollapsed && (
           <svg viewBox="0 0 544.15 115.52" className="h-8 w-auto" fill="#f0e9e3">
             <g>
@@ -463,9 +464,10 @@ const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user,
         </button>
       </div>
       
-      {!isCollapsed && <p className="text-gray-600 text-sm mb-6 px-2">CRM Comercial</p>}
+      {!isCollapsed && <p className="text-gray-600 text-sm mb-4 px-4">CRM Comercial</p>}
       
-      <nav className="space-y-1 flex-1">
+      {/* Menu com scroll */}
+      <nav className="flex-1 overflow-y-auto px-4 space-y-1">
         {menuItems.map((item) => (
           <button key={item.id} onClick={() => setActiveView(item.id)} title={isCollapsed ? item.label : ""}
             className={`w-full flex items-center ${isCollapsed ? 'justify-center' : ''} gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ${
@@ -477,19 +479,24 @@ const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user,
         ))}
       </nav>
 
-      <div className="pt-4 border-t border-gray-800">
+      {/* Footer do Sidebar - sempre visível */}
+      <div className="p-4 border-t border-gray-800 bg-gray-950">
         {!isCollapsed ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-3 px-2">
-              <div className="w-8 h-8 bg-lime-500/20 rounded-full flex items-center justify-center">
-                <User size={16} className="text-lime-400" />
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-lime-500/20 rounded-full flex items-center justify-center overflow-hidden">
+                {user?.user_metadata?.avatar_url ? (
+                  <img src={user.user_metadata.avatar_url} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <User size={16} className="text-lime-400" />
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-sm text-gray-200 truncate">{user?.user_metadata?.name || user?.email?.split('@')[0]}</p>
                 <p className="text-xs text-gray-600 truncate">{user?.email}</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 px-2 text-xs text-gray-500">
+            <div className="flex items-center gap-2 text-xs text-gray-500">
               <div className="w-2 h-2 bg-lime-500 rounded-full animate-pulse" />
               <span>Sincronizado</span>
             </div>
@@ -645,13 +652,15 @@ const HomeView = ({ data, updateData }) => {
     setContactNote("");
   };
 
-  // Contar leads por estágio
+  // Contar leads por estágio (usando status que é o campo correto)
   const leadsByStage = {
-    novo: leads.filter(l => l.stage === 'novo').length,
-    contato: leads.filter(l => l.stage === 'contato').length,
-    reuniao: leads.filter(l => l.stage === 'reuniao').length,
-    proposta: leads.filter(l => l.stage === 'proposta').length,
-    negociacao: leads.filter(l => l.stage === 'negociacao').length
+    novo: leads.filter(l => l.status === 'novo').length,
+    triagem: leads.filter(l => l.status === 'triagem').length,
+    diagnostico: leads.filter(l => l.status === 'diagnostico').length,
+    elaborando: leads.filter(l => l.status === 'elaborando').length,
+    apresentada: leads.filter(l => l.status === 'apresentada').length,
+    negociacao: leads.filter(l => l.status === 'negociacao').length,
+    backlog: leads.filter(l => l.status === 'backlog').length
   };
 
   return (
@@ -700,7 +709,7 @@ const HomeView = ({ data, updateData }) => {
             <p className="text-xs text-gray-400">Leads no Funil</p>
           </div>
           <p className="text-2xl font-bold text-cyan-400">{leads.length}</p>
-          <p className="text-xs text-gray-500">{leadsByStage.proposta + leadsByStage.negociacao} em negociação</p>
+          <p className="text-xs text-gray-500">{leadsByStage.apresentada + leadsByStage.negociacao} em negociação</p>
         </Card>
 
         {/* Projetos Ativos */}
@@ -854,13 +863,15 @@ const HomeView = ({ data, updateData }) => {
           <h3 className="font-bold text-gray-100 mb-3 flex items-center gap-2">
             <Target size={18} className="text-lime-400" /> Pipeline Comercial
           </h3>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-4 md:grid-cols-7 gap-2">
             {[
               { stage: 'novo', label: 'Novo', color: 'bg-gray-600', count: leadsByStage.novo },
-              { stage: 'contato', label: 'Contato', color: 'bg-cyan-600', count: leadsByStage.contato },
-              { stage: 'reuniao', label: 'Reunião', color: 'bg-violet-600', count: leadsByStage.reuniao },
-              { stage: 'proposta', label: 'Proposta', color: 'bg-amber-600', count: leadsByStage.proposta },
-              { stage: 'negociacao', label: 'Negociação', color: 'bg-lime-600', count: leadsByStage.negociacao }
+              { stage: 'triagem', label: 'Triagem', color: 'bg-slate-600', count: leadsByStage.triagem },
+              { stage: 'diagnostico', label: 'Diagnóstico', color: 'bg-cyan-600', count: leadsByStage.diagnostico },
+              { stage: 'elaborando', label: 'Elaborando', color: 'bg-violet-600', count: leadsByStage.elaborando },
+              { stage: 'apresentada', label: 'Apresentada', color: 'bg-amber-600', count: leadsByStage.apresentada },
+              { stage: 'negociacao', label: 'Negociação', color: 'bg-lime-600', count: leadsByStage.negociacao },
+              { stage: 'backlog', label: 'Backlog', color: 'bg-pink-600', count: leadsByStage.backlog }
             ].map(item => (
               <div key={item.stage} className="text-center">
                 <div className={`${item.color} rounded-lg p-3 mb-1`}>
@@ -872,13 +883,13 @@ const HomeView = ({ data, updateData }) => {
           </div>
           
           {/* Total em proposta/negociação */}
-          {(leadsByStage.proposta + leadsByStage.negociacao) > 0 && (
+          {(leadsByStage.apresentada + leadsByStage.negociacao) > 0 && (
             <div className="mt-4 p-3 bg-emerald-900/20 border border-emerald-700 rounded-lg">
               <p className="text-xs text-gray-400">Valor em negociação</p>
               <p className="text-xl font-bold text-emerald-400">
                 {formatCurrency(
                   leads
-                    .filter(l => l.stage === 'proposta' || l.stage === 'negociacao')
+                    .filter(l => l.status === 'apresentada' || l.status === 'negociacao')
                     .reduce((acc, l) => acc + (l.value || 0), 0)
                 )}
               </p>
