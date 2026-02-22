@@ -241,9 +241,14 @@ const AuthScreen = ({ onLogin }) => {
 const usePersistedState = (key, defaultValue, user) => {
   const [data, setData] = useState(defaultValue);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('idle'); // idle, saving, saved, error
   const saveTimeoutRef = useRef(null);
-  const lastSavedRef = useRef(null);
+  const dataRef = useRef(data);
+
+  // Manter ref atualizada
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   const deepMerge = (target, source) => {
     const result = { ...target };
@@ -273,44 +278,59 @@ const usePersistedState = (key, defaultValue, user) => {
           .from('crm_data')
           .select('data')
           .eq('user_id', user.id)
-          .single();
+          .maybeSingle(); // Usa maybeSingle em vez de single para não dar erro se não existir
 
-        if (error && error.code !== 'PGRST116') {
+        if (error) {
           console.error("Erro ao buscar do Supabase:", error);
+          throw error;
         }
 
         if (cloudData?.data) {
           const merged = deepMerge(defaultValue, cloudData.data);
           setData(merged);
           localStorage.setItem(key, JSON.stringify(merged));
-          lastSavedRef.current = JSON.stringify(merged);
           console.log("☁️ Dados carregados da nuvem!", Object.keys(cloudData.data));
         } else {
           // Sem dados na nuvem - verifica localStorage para migração
           console.log("📭 Sem dados na nuvem, verificando localStorage...");
           const localData = localStorage.getItem(key);
           if (localData) {
-            const parsed = JSON.parse(localData);
-            const merged = deepMerge(defaultValue, parsed);
-            setData(merged);
-            
-            // Migra para o Supabase
-            const { error: upsertError } = await supabase
-              .from('crm_data')
-              .upsert({ 
-                user_id: user.id, 
-                data: merged,
-                updated_at: new Date().toISOString()
-              });
-            
-            if (upsertError) {
-              console.error("Erro ao migrar dados:", upsertError);
-            } else {
-              lastSavedRef.current = JSON.stringify(merged);
-              console.log("🚀 Dados migrados do localStorage para a nuvem!");
+            try {
+              const parsed = JSON.parse(localData);
+              const merged = deepMerge(defaultValue, parsed);
+              setData(merged);
+              
+              // Migra para o Supabase
+              console.log("🚀 Migrando dados para a nuvem...");
+              const { error: insertError } = await supabase
+                .from('crm_data')
+                .insert({ 
+                  user_id: user.id, 
+                  data: merged
+                });
+              
+              if (insertError) {
+                console.error("Erro ao migrar dados:", insertError);
+                // Tenta upsert se insert falhar
+                const { error: upsertError } = await supabase
+                  .from('crm_data')
+                  .upsert({ 
+                    user_id: user.id, 
+                    data: merged
+                  }, { onConflict: 'user_id' });
+                
+                if (upsertError) {
+                  console.error("Erro no upsert:", upsertError);
+                } else {
+                  console.log("✅ Dados migrados com upsert!");
+                }
+              } else {
+                console.log("✅ Dados migrados para a nuvem!");
+              }
+            } catch (parseError) {
+              console.error("Erro ao parsear localStorage:", parseError);
             }
           } else {
-            // Nenhum dado - usa defaultValue
             console.log("📝 Iniciando com dados padrão");
             setData(defaultValue);
           }
@@ -320,7 +340,12 @@ const usePersistedState = (key, defaultValue, user) => {
         // Fallback para localStorage
         const localData = localStorage.getItem(key);
         if (localData) {
-          setData(deepMerge(defaultValue, JSON.parse(localData)));
+          try {
+            setData(deepMerge(defaultValue, JSON.parse(localData)));
+            console.log("📱 Usando dados do localStorage como fallback");
+          } catch (e) {
+            console.error("Erro no fallback:", e);
+          }
         }
       }
       
@@ -328,45 +353,70 @@ const usePersistedState = (key, defaultValue, user) => {
     };
 
     loadData();
-  }, [user?.id]); // Dependência apenas do user.id
+  }, [user?.id]);
 
   // Função para salvar no Supabase
   const saveToCloud = async (dataToSave) => {
     if (!user?.id) {
-      console.warn("⚠️ Usuário não logado, salvando apenas localmente");
-      return;
+      console.warn("⚠️ Usuário não logado");
+      return false;
     }
 
-    const dataString = JSON.stringify(dataToSave);
-    
-    // Evita salvar se não houve mudança
-    if (dataString === lastSavedRef.current) {
-      return;
-    }
-
-    setIsSaving(true);
+    setSaveStatus('saving');
     
     try {
-      const { error } = await supabase
+      console.log("💾 Salvando na nuvem...");
+      
+      // Primeiro tenta UPDATE (mais comum após o primeiro save)
+      const { error: updateError } = await supabase
         .from('crm_data')
-        .upsert({ 
-          user_id: user.id, 
+        .update({ 
           data: dataToSave,
           updated_at: new Date().toISOString()
-        });
+        })
+        .eq('user_id', user.id);
 
-      if (error) {
-        console.error("❌ Erro ao salvar na nuvem:", error);
-        throw error;
+      if (updateError) {
+        console.log("Update falhou, tentando insert...", updateError);
+        
+        // Se update falhar, tenta INSERT
+        const { error: insertError } = await supabase
+          .from('crm_data')
+          .insert({ 
+            user_id: user.id, 
+            data: dataToSave
+          });
+
+        if (insertError) {
+          // Se insert também falhar com duplicata, tenta update de novo
+          if (insertError.code === '23505') {
+            const { error: retryError } = await supabase
+              .from('crm_data')
+              .update({ 
+                data: dataToSave,
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', user.id);
+            
+            if (retryError) {
+              throw retryError;
+            }
+          } else {
+            throw insertError;
+          }
+        }
       }
       
-      lastSavedRef.current = dataString;
       console.log("☁️ Salvo na nuvem!", new Date().toLocaleTimeString());
+      setSaveStatus('saved');
+      
+      // Reset status após 2 segundos
+      setTimeout(() => setSaveStatus('idle'), 2000);
+      return true;
     } catch (err) {
       console.error("❌ Falha ao salvar:", err);
-      // Mantém no localStorage como backup
-    } finally {
-      setIsSaving(false);
+      setSaveStatus('error');
+      return false;
     }
   };
 
@@ -380,44 +430,66 @@ const usePersistedState = (key, defaultValue, user) => {
     // Salva no localStorage imediatamente (backup local)
     try {
       localStorage.setItem(key, JSON.stringify(updatedData));
+      console.log("💾 Salvo no localStorage");
     } catch (err) {
       console.error("Erro ao salvar no localStorage:", err);
     }
 
-    // Debounce para salvar no Supabase (500ms)
+    // Debounce para salvar no Supabase (1 segundo)
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
     
+    setSaveStatus('saving');
     saveTimeoutRef.current = setTimeout(() => {
       saveToCloud(updatedData);
-    }, 500);
+    }, 1000);
   };
 
-  // Salvar antes de fechar a página
+  // Salvar ao fechar/recarregar página
   useEffect(() => {
-    const handleBeforeUnload = () => {
+    const handleBeforeUnload = (e) => {
+      // Cancela o debounce pendente
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
-      // Tenta salvar sincronamente
-      if (user?.id && data) {
-        localStorage.setItem(key, JSON.stringify(data));
-        // Usa sendBeacon para salvar assincronamente mesmo ao fechar
-        const payload = JSON.stringify({
-          user_id: user.id,
-          data: data,
-          updated_at: new Date().toISOString()
-        });
-        navigator.sendBeacon && navigator.sendBeacon(
-          `${SUPABASE_URL}/rest/v1/crm_data?on_conflict=user_id`,
-          new Blob([payload], { type: 'application/json' })
-        );
+      
+      // Salva no localStorage garantido
+      try {
+        localStorage.setItem(key, JSON.stringify(dataRef.current));
+      } catch (err) {
+        console.error("Erro ao salvar antes de fechar:", err);
+      }
+      
+      // Tenta salvar no Supabase via fetch síncrono (keepalive)
+      if (user?.id && dataRef.current) {
+        try {
+          fetch(`${SUPABASE_URL}/rest/v1/crm_data`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+              'Prefer': 'resolution=merge-duplicates'
+            },
+            body: JSON.stringify({
+              user_id: user.id,
+              data: dataRef.current,
+              updated_at: new Date().toISOString()
+            }),
+            keepalive: true
+          });
+        } catch (err) {
+          console.error("Erro no save final:", err);
+        }
       }
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [user?.id, key]);
+
+  return [data, updateData, isLoading, saveStatus];
   }, [user?.id, data]);
 
   return [data, updateData, isLoading, isSaving];
@@ -535,7 +607,7 @@ const Modal = ({ isOpen, onClose, title, children, size = "md" }) => {
 };
 
 // Sidebar Component com menu retrátil
-const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user, onLogout, isSaving }) => {
+const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user, onLogout, saveStatus }) => {
   const menuItems = [
     { id: "home", label: "Dashboard", icon: LayoutDashboard },
     { id: "comercial", label: "Comercial", icon: TrendingUp },
@@ -550,6 +622,22 @@ const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user,
     { id: "data", label: "Backup / Dados", icon: FileSpreadsheet },
     { id: "settings", label: "Configurações", icon: Settings },
   ];
+
+  // Status de salvamento visual
+  const getSaveStatusDisplay = () => {
+    switch (saveStatus) {
+      case 'saving':
+        return { text: 'Salvando...', color: 'text-amber-400', dot: 'bg-amber-500 animate-pulse' };
+      case 'saved':
+        return { text: 'Salvo ✓', color: 'text-lime-400', dot: 'bg-lime-500' };
+      case 'error':
+        return { text: 'Erro!', color: 'text-red-400', dot: 'bg-red-500 animate-pulse' };
+      default:
+        return { text: 'Sincronizado', color: 'text-gray-500', dot: 'bg-lime-500 animate-pulse' };
+    }
+  };
+
+  const statusDisplay = getSaveStatusDisplay();
 
   return (
     <div className={`${isCollapsed ? 'w-16' : 'w-64'} bg-gray-950 text-white h-screen sticky top-0 flex flex-col border-r border-gray-800 transition-all duration-300`}>
@@ -614,17 +702,8 @@ const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user,
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs">
-              {isSaving ? (
-                <>
-                  <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
-                  <span className="text-amber-400">Salvando...</span>
-                </>
-              ) : (
-                <>
-                  <div className="w-2 h-2 bg-lime-500 rounded-full" />
-                  <span className="text-gray-500">Sincronizado</span>
-                </>
-              )}
+              <div className={`w-2 h-2 rounded-full ${statusDisplay.dot}`} />
+              <span className={statusDisplay.color}>{statusDisplay.text}</span>
             </div>
             <button onClick={onLogout} className="w-full flex items-center gap-3 px-3 py-2 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded-lg transition-colors">
               <LogOut size={18} /><span className="text-sm">Sair</span>
@@ -9560,7 +9639,7 @@ export default function HypefocoCRM() {
   const [authLoading, setAuthLoading] = useState(true);
   const [activeView, setActiveView] = useState("home");
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [data, updateData, isLoading, isSaving] = usePersistedState(STORAGE_KEY, initialData, user);
+  const [data, updateData, isLoading, saveStatus] = usePersistedState(STORAGE_KEY, initialData, user);
 
   // Verificar sessão ao carregar
   useEffect(() => {
@@ -9613,7 +9692,7 @@ export default function HypefocoCRM() {
 
   return (
     <div className="min-h-screen bg-gray-950 flex">
-      <Sidebar activeView={activeView} setActiveView={setActiveView} isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} user={user} onLogout={handleLogout} isSaving={isSaving} />
+      <Sidebar activeView={activeView} setActiveView={setActiveView} isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} user={user} onLogout={handleLogout} saveStatus={saveStatus} />
       <main className="flex-1 p-4 md:p-8 overflow-auto">{renderView()}</main>
     </div>
   );
