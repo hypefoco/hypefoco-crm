@@ -241,7 +241,9 @@ const AuthScreen = ({ onLogin }) => {
 const usePersistedState = (key, defaultValue, user) => {
   const [data, setData] = useState(defaultValue);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const saveTimeoutRef = useRef(null);
+  const lastSavedRef = useRef(null);
 
   const deepMerge = (target, source) => {
     const result = { ...target };
@@ -255,55 +257,170 @@ const usePersistedState = (key, defaultValue, user) => {
     return result;
   };
 
+  // Carregar dados ao iniciar
   useEffect(() => {
     const loadData = async () => {
-      if (!user) { setIsLoading(false); return; }
+      if (!user) { 
+        setIsLoading(false); 
+        return; 
+      }
+
+      console.log("🔄 Carregando dados para usuário:", user.id);
 
       try {
+        // Primeiro tenta carregar do Supabase
         const { data: cloudData, error } = await supabase
-          .from('crm_data').select('data').eq('user_id', user.id).single();
+          .from('crm_data')
+          .select('data')
+          .eq('user_id', user.id)
+          .single();
+
+        if (error && error.code !== 'PGRST116') {
+          console.error("Erro ao buscar do Supabase:", error);
+        }
 
         if (cloudData?.data) {
           const merged = deepMerge(defaultValue, cloudData.data);
           setData(merged);
           localStorage.setItem(key, JSON.stringify(merged));
-          console.log("☁️ Dados carregados da nuvem!");
+          lastSavedRef.current = JSON.stringify(merged);
+          console.log("☁️ Dados carregados da nuvem!", Object.keys(cloudData.data));
         } else {
+          // Sem dados na nuvem - verifica localStorage para migração
+          console.log("📭 Sem dados na nuvem, verificando localStorage...");
           const localData = localStorage.getItem(key);
           if (localData) {
             const parsed = JSON.parse(localData);
             const merged = deepMerge(defaultValue, parsed);
             setData(merged);
-            await supabase.from('crm_data').upsert({ user_id: user.id, data: merged });
-            console.log("🚀 Dados migrados para a nuvem!");
+            
+            // Migra para o Supabase
+            const { error: upsertError } = await supabase
+              .from('crm_data')
+              .upsert({ 
+                user_id: user.id, 
+                data: merged,
+                updated_at: new Date().toISOString()
+              });
+            
+            if (upsertError) {
+              console.error("Erro ao migrar dados:", upsertError);
+            } else {
+              lastSavedRef.current = JSON.stringify(merged);
+              console.log("🚀 Dados migrados do localStorage para a nuvem!");
+            }
+          } else {
+            // Nenhum dado - usa defaultValue
+            console.log("📝 Iniciando com dados padrão");
+            setData(defaultValue);
           }
         }
       } catch (err) {
-        console.error("Erro ao carregar:", err);
+        console.error("Erro ao carregar dados:", err);
+        // Fallback para localStorage
         const localData = localStorage.getItem(key);
-        if (localData) setData(deepMerge(defaultValue, JSON.parse(localData)));
+        if (localData) {
+          setData(deepMerge(defaultValue, JSON.parse(localData)));
+        }
       }
+      
       setIsLoading(false);
     };
+
     loadData();
-  }, [user]);
+  }, [user?.id]); // Dependência apenas do user.id
 
-  const updateData = (newData) => {
-    const updatedData = typeof newData === 'function' ? newData(data) : newData;
-    setData(updatedData);
-    localStorage.setItem(key, JSON.stringify(updatedData));
+  // Função para salvar no Supabase
+  const saveToCloud = async (dataToSave) => {
+    if (!user?.id) {
+      console.warn("⚠️ Usuário não logado, salvando apenas localmente");
+      return;
+    }
 
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(async () => {
-      if (!user) return;
-      try {
-        await supabase.from('crm_data').upsert({ user_id: user.id, data: updatedData, updated_at: new Date().toISOString() });
-        console.log("☁️ Salvo na nuvem!", new Date().toLocaleTimeString());
-      } catch (err) { console.error("Erro ao salvar:", err); }
-    }, 1000);
+    const dataString = JSON.stringify(dataToSave);
+    
+    // Evita salvar se não houve mudança
+    if (dataString === lastSavedRef.current) {
+      return;
+    }
+
+    setIsSaving(true);
+    
+    try {
+      const { error } = await supabase
+        .from('crm_data')
+        .upsert({ 
+          user_id: user.id, 
+          data: dataToSave,
+          updated_at: new Date().toISOString()
+        });
+
+      if (error) {
+        console.error("❌ Erro ao salvar na nuvem:", error);
+        throw error;
+      }
+      
+      lastSavedRef.current = dataString;
+      console.log("☁️ Salvo na nuvem!", new Date().toLocaleTimeString());
+    } catch (err) {
+      console.error("❌ Falha ao salvar:", err);
+      // Mantém no localStorage como backup
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  return [data, updateData, isLoading];
+  // Função de atualização
+  const updateData = (newData) => {
+    const updatedData = typeof newData === 'function' ? newData(data) : newData;
+    
+    // Atualiza estado imediatamente
+    setData(updatedData);
+    
+    // Salva no localStorage imediatamente (backup local)
+    try {
+      localStorage.setItem(key, JSON.stringify(updatedData));
+    } catch (err) {
+      console.error("Erro ao salvar no localStorage:", err);
+    }
+
+    // Debounce para salvar no Supabase (500ms)
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    
+    saveTimeoutRef.current = setTimeout(() => {
+      saveToCloud(updatedData);
+    }, 500);
+  };
+
+  // Salvar antes de fechar a página
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+      // Tenta salvar sincronamente
+      if (user?.id && data) {
+        localStorage.setItem(key, JSON.stringify(data));
+        // Usa sendBeacon para salvar assincronamente mesmo ao fechar
+        const payload = JSON.stringify({
+          user_id: user.id,
+          data: data,
+          updated_at: new Date().toISOString()
+        });
+        navigator.sendBeacon && navigator.sendBeacon(
+          `${SUPABASE_URL}/rest/v1/crm_data?on_conflict=user_id`,
+          new Blob([payload], { type: 'application/json' })
+        );
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [user?.id, data]);
+
+  return [data, updateData, isLoading, isSaving];
 };
 
 // Componentes de UI reutilizáveis
@@ -418,7 +535,7 @@ const Modal = ({ isOpen, onClose, title, children, size = "md" }) => {
 };
 
 // Sidebar Component com menu retrátil
-const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user, onLogout }) => {
+const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user, onLogout, isSaving }) => {
   const menuItems = [
     { id: "home", label: "Dashboard", icon: LayoutDashboard },
     { id: "comercial", label: "Comercial", icon: TrendingUp },
@@ -496,9 +613,18 @@ const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user,
                 <p className="text-xs text-gray-600 truncate">{user?.email}</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <div className="w-2 h-2 bg-lime-500 rounded-full animate-pulse" />
-              <span>Sincronizado</span>
+            <div className="flex items-center gap-2 text-xs">
+              {isSaving ? (
+                <>
+                  <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
+                  <span className="text-amber-400">Salvando...</span>
+                </>
+              ) : (
+                <>
+                  <div className="w-2 h-2 bg-lime-500 rounded-full" />
+                  <span className="text-gray-500">Sincronizado</span>
+                </>
+              )}
             </div>
             <button onClick={onLogout} className="w-full flex items-center gap-3 px-3 py-2 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded-lg transition-colors">
               <LogOut size={18} /><span className="text-sm">Sair</span>
@@ -9434,7 +9560,7 @@ export default function HypefocoCRM() {
   const [authLoading, setAuthLoading] = useState(true);
   const [activeView, setActiveView] = useState("home");
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [data, updateData, isLoading] = usePersistedState(STORAGE_KEY, initialData, user);
+  const [data, updateData, isLoading, isSaving] = usePersistedState(STORAGE_KEY, initialData, user);
 
   // Verificar sessão ao carregar
   useEffect(() => {
@@ -9487,7 +9613,7 @@ export default function HypefocoCRM() {
 
   return (
     <div className="min-h-screen bg-gray-950 flex">
-      <Sidebar activeView={activeView} setActiveView={setActiveView} isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} user={user} onLogout={handleLogout} />
+      <Sidebar activeView={activeView} setActiveView={setActiveView} isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} user={user} onLogout={handleLogout} isSaving={isSaving} />
       <main className="flex-1 p-4 md:p-8 overflow-auto">{renderView()}</main>
     </div>
   );
