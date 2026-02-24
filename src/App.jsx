@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from "recharts";
-import { Users, TrendingUp, DollarSign, Plus, Search, X, Edit2, Trash2, ChevronDown, Calendar, Target, LayoutDashboard, ArrowUpRight, ArrowDownRight, Megaphone, Calculator, UserX, MessageSquare, Check, Clock, Percent, TrendingDown, Download, Upload, FileSpreadsheet, Menu, ChevronLeft, Phone, Video, Mail, FileText, Send, CalendarDays, AlertCircle, Settings, UserPlus, Image, User, Wallet, Receipt, CreditCard, PiggyBank, ChevronRight, FileCheck, Ban, RefreshCw, FolderKanban, GripVertical, Palette, MoreHorizontal, Link2, CircleDot, Building, UserCog, Coins, Layers, Package, Eye, LogOut, Lock, BarChart2 } from "lucide-react";
+import { Users, TrendingUp, DollarSign, Plus, Search, X, Edit2, Trash2, ChevronDown, Calendar, Target, LayoutDashboard, ArrowUpRight, ArrowDownRight, Megaphone, Calculator, UserX, MessageSquare, Check, Clock, Percent, TrendingDown, Download, Upload, FileSpreadsheet, Menu, ChevronLeft, Phone, Video, Mail, FileText, Send, CalendarDays, AlertCircle, Settings, UserPlus, Image, User, Wallet, Receipt, CreditCard, PiggyBank, ChevronRight, FileCheck, Ban, RefreshCw, FolderKanban, GripVertical, Palette, MoreHorizontal, Link2, CircleDot, Building, UserCog, Coins, Layers, Package, Eye, LogOut, Lock, BarChart2, Smile } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 
 // ============================================
@@ -142,6 +142,41 @@ const PIPELINE_STAGES = [
   { id: "negociacao", name: "Follow-up / Negociação", probability: 75, color: "border-violet-400 bg-violet-900/30" },
   { id: "fechado", name: "Fechado / Onboarding", probability: 100, color: "border-emerald-400 bg-emerald-900/30" },
 ];
+
+// Role definitions and per-role tab access
+const ROLES = [
+  { id: "designer", label: "Designer", color: "bg-blue-500/20 text-blue-400 border border-blue-500/30" },
+  { id: "head_projetos", label: "Head de Projetos", color: "bg-purple-500/20 text-purple-400 border border-purple-500/30" },
+  { id: "comercial", label: "Comercial", color: "bg-orange-500/20 text-orange-400 border border-orange-500/30" },
+  { id: "diretor_criacao", label: "Diretor de Criação", color: "bg-pink-500/20 text-pink-400 border border-pink-500/30" },
+  { id: "admin", label: "Admin", color: "bg-lime-500/20 text-lime-400 border border-lime-500/30" },
+];
+
+const ROLE_TABS = {
+  designer: ["projects"],
+  head_projetos: ["projects", "pautas"],
+  comercial: ["comercial", "pipeline", "budgets", "activities", "clients", "lost"],
+  diretor_criacao: ["home", "comercial", "pipeline", "projects", "pautas", "budgets", "activities", "clients", "lost", "financial", "investment"],
+  admin: ["home", "comercial", "pipeline", "projects", "pautas", "budgets", "activities", "clients", "lost", "financial", "investment", "data", "settings"],
+};
+
+const EMOJI_LIST = [
+  "😀","😃","😄","😁","😆","😂","🤣","😊","😇","🙂","😉","😌","😍","🥰","😘","😋","😛","😝","😜","🤪","🤓","😎","🤩","🥳","😏","😒","😞","😟","😕","😣","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","😱","😨","😰","😥","🤔","🤗","🫡","🤭","🤥","😶","😐","😑","😬","🙄","😯","😮","😲","🥱","😴","🤢","🤮","🤧","😷","🤒","🤕","🤑","🤠","😈","👿","💀","🤖","🎃","👍","👎","✌️","🤞","🤘","👌","👈","👉","👆","👇","👏","🙌","🙏","💪","🦾","🤝","✍️","💅","💃","🕺","🧑‍💻","👨‍💻","👩‍💻","🧑‍🎨","👨‍🎨","👩‍🎨","🧑‍💼","👨‍💼","👩‍💼","🌟","⭐","💫","✨","🔥","💥","❄️","🌊","🌈","☀️","🌙","⚡","🎯","🎮","🎲","🎨","🎭","🎬","🎤","🎧","🎼","🎹","🎸","🏆","🥇","🏅","💝","💖","❤️","🧡","💛","💚","💙","💜","🖤","💔","💋","🌺","🌸","🌼","🌻","🌹","🌷","🌿","🍀","🍁","🍃","🐶","🐱","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🐔","🐧","🦆","🦅","🦉","🐺","🐴","🦄","🐝","🦋","🐌","🐞","🐟","🐬","🐳","🦈","🐊","🐘","🦒","🦘","🐕","🐩","🐈","🍎","🍊","🍋","🍇","🍓","🫐","🍈","🍒","🍑","🥭","🍍","🥥","🥝","🍅","🫒","🥑","🍆","🥦","🥕","🌽","🌶️","🧄","🧅","🥔","🍠","🥐","🥖","🥨","🧀","🥚","🍳","🧈","🥞","🧇","🥓","🥩","🍗","🍖","🌭","🍔","🍟","🍕","🫓","🥪","🥙","🧆","🌮","🌯","🫔","🥗","🍱","🍘","🍙","🍚","🍛","🍜","🍝","🍣","🍤","🍙","🥟","🦪","🍦","🍧","🍨","🍩","🍪","🎂","🍰","🧁","🥧","🍫","🍬","🍭","🍮","🍯","🍵","☕","🍺","🍻","🥂","🍷","🥃","🍸","🍹","🧃","🥤","🧋","💻","📱","⌨️","🖥️","🖨️","🖱️","🖲️","💾","💿","📀","📷","📸","📹","🎥","📽️","🎞️","📞","☎️","📟","📠","📺","📻","🧭","⏰","⌚","📡","🔋","🔌","💡","🔦","🕯️","🪔","🧯","🛢️","💰","💵","💳","💎","⚖️","🔧","🔨","⛏️","⚙️","🗜️","🔩","🪛","🔫","🧲","💣","🪓","🔪","🗡️","⚔️","🛡️","🚪","🪟","🪞","🛏️","🛋️","🚽","🚿","🛁","🧴","🧷","🧹","🧺","🧻","🧼","🫧","🪥","🪒","🧽","🪣","🧰","🪤","🪣","📦","📫","📪","📬","📭","📮","📯","📢","📣","📜","📄","📃","📑","🗒️","🗓️","📆","📅","📇","🗃️","🗳️","🗂️","📋","📁","📂","🗂️","🗄️","🗑️","📊","📈","📉","🗺️","📍","📌","📎","🖇️","📏","📐","✂️","🪡","🧵","🪢","🖊️","🖋️","✒️","🖌️","🖍️","📝","✏️","🔍","🔎","🔐","🔏","🔓","🔒","🗝️","🔑",
+];
+
+const checkTeamMember = async (email) => {
+  try {
+    const { data, error } = await supabase
+      .from("studio_members")
+      .select("owner_user_id, role")
+      .eq("member_email", email)
+      .single();
+    if (error || !data) return null;
+    return data;
+  } catch {
+    return null;
+  }
+};
 
 // Hook para persistência de dados (localStorage) com backup automático
 // ============================================
@@ -609,8 +644,8 @@ const Modal = ({ isOpen, onClose, title, children, size = "md" }) => {
 };
 
 // Sidebar Component com menu retrátil
-const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user, onLogout, saveStatus }) => {
-  const menuItems = [
+const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user, onLogout, saveStatus, memberRole }) => {
+  const allMenuItems = [
     { id: "home", label: "Dashboard", icon: LayoutDashboard },
     { id: "comercial", label: "Comercial", icon: TrendingUp },
     { id: "pipeline", label: "Pipeline", icon: Target },
@@ -625,6 +660,8 @@ const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user,
     { id: "data", label: "Backup / Dados", icon: FileSpreadsheet },
     { id: "settings", label: "Configurações", icon: Settings },
   ];
+  const allowedTabs = memberRole ? (ROLE_TABS[memberRole] || []) : null;
+  const menuItems = allowedTabs ? allMenuItems.filter(item => allowedTabs.includes(item.id)) : allMenuItems;
 
   // Status de salvamento visual
   const getSaveStatusDisplay = () => {
@@ -7816,47 +7853,52 @@ const DataView = ({ data, updateData }) => {
 };
 
 // Settings View - Configurações do CRM
-const SettingsView = ({ data, updateData }) => {
+const SettingsView = ({ data, updateData, user }) => {
+  const emptyForm = { name: "", email: "", photo: "", emoji: "😀", role: "designer", bio: "", goals: "", birthday: "", startDate: "" };
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingMember, setEditingMember] = useState(null);
-  const [formData, setFormData] = useState({ name: "", email: "", photo: "" });
+  const [formData, setFormData] = useState(emptyForm);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const teamMembers = data.teamMembers || [];
 
-  const handleSave = () => {
+  const openAdd = () => { setEditingMember(null); setFormData(emptyForm); setShowEmojiPicker(false); setIsModalOpen(true); };
+  const openEdit = (m) => { setEditingMember(m); setFormData({ ...emptyForm, ...m }); setShowEmojiPicker(false); setIsModalOpen(true); };
+
+  const handleSave = async () => {
     if (!formData.name) return;
-    
-    if (editingMember) {
-      updateData(prev => ({
-        ...prev,
-        teamMembers: (prev.teamMembers || []).map(m => 
-          m.id === editingMember.id ? { ...formData, id: m.id } : m
-        )
-      }));
-    } else {
-      const newMember = { ...formData, id: Date.now() };
-      updateData(prev => ({
-        ...prev,
-        teamMembers: [...(prev.teamMembers || []), newMember]
-      }));
+    const saved = editingMember
+      ? { ...formData, id: editingMember.id }
+      : { ...formData, id: Date.now() };
+
+    updateData(prev => ({
+      ...prev,
+      teamMembers: editingMember
+        ? (prev.teamMembers || []).map(m => m.id === editingMember.id ? saved : m)
+        : [...(prev.teamMembers || []), saved],
+    }));
+
+    // Sync to studio_members table if email provided
+    if (formData.email && user) {
+      try {
+        await supabase.from("studio_members").upsert({
+          member_email: formData.email,
+          owner_user_id: user.id,
+          role: formData.role || "designer",
+        }, { onConflict: "member_email" });
+      } catch {}
     }
-    
+
     setIsModalOpen(false);
     setEditingMember(null);
-    setFormData({ name: "", email: "", photo: "" });
-  };
-
-  const handleEdit = (member) => {
-    setEditingMember(member);
-    setFormData(member);
-    setIsModalOpen(true);
+    setFormData(emptyForm);
   };
 
   const handleDelete = (id) => {
     if (confirm("Excluir este membro da equipe?")) {
       updateData(prev => ({
         ...prev,
-        teamMembers: (prev.teamMembers || []).filter(m => m.id !== id)
+        teamMembers: (prev.teamMembers || []).filter(m => m.id !== id),
       }));
     }
   };
@@ -7864,22 +7906,28 @@ const SettingsView = ({ data, updateData }) => {
   const handlePhotoUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    
     const reader = new FileReader();
-    reader.onload = (event) => {
-      setFormData({ ...formData, photo: event.target.result });
-    };
+    reader.onload = (ev) => setFormData(f => ({ ...f, photo: ev.target.result }));
     reader.readAsDataURL(file);
+  };
+
+  const getRoleInfo = (roleId) => ROLES.find(r => r.id === roleId) || ROLES[0];
+
+  const ALL_TAB_LABELS = {
+    home: "Dashboard", comercial: "Comercial", pipeline: "Pipeline", projects: "Projetos",
+    pautas: "Pautas", budgets: "Orçamentos", activities: "Atividades", clients: "Clientes",
+    lost: "Leads Perdidos", financial: "Financeiro", investment: "Investimento",
+    data: "Backup / Dados", settings: "Configurações",
   };
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-gray-100">Configurações</h1>
-        <p className="text-gray-500 mt-1">Gerencie a equipe comercial e configurações do CRM</p>
+        <p className="text-gray-500 mt-1">Gerencie a equipe geral e permissões de acesso</p>
       </div>
 
-      {/* Equipe Comercial */}
+      {/* Equipe Geral */}
       <Card className="p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -7887,75 +7935,175 @@ const SettingsView = ({ data, updateData }) => {
               <Users size={20} className="text-gray-900" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-gray-100">Equipe Comercial</h3>
-              <p className="text-sm text-gray-500">Responsáveis pelos leads</p>
+              <h3 className="text-lg font-bold text-gray-100">Equipe Geral</h3>
+              <p className="text-sm text-gray-500">{teamMembers.length} membro{teamMembers.length !== 1 ? "s" : ""} cadastrado{teamMembers.length !== 1 ? "s" : ""}</p>
             </div>
           </div>
-          <Button icon={UserPlus} onClick={() => { setEditingMember(null); setFormData({ name: "", email: "", photo: "" }); setIsModalOpen(true); }}>
-            Adicionar
-          </Button>
+          <Button icon={UserPlus} onClick={openAdd}>Adicionar</Button>
         </div>
 
         {teamMembers.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {teamMembers.map(member => (
-              <div key={member.id} className="p-4 bg-gray-800/50 rounded-xl border border-gray-700 flex items-center gap-4">
-                <div className="w-14 h-14 rounded-full overflow-hidden flex-shrink-0 border-2 border-lime-500">
-                  {member.photo ? (
-                    <img src={member.photo} alt={member.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full bg-lime-600 flex items-center justify-center text-xl font-bold text-gray-900">
-                      {member.name.charAt(0).toUpperCase()}
+            {teamMembers.map(member => {
+              const roleInfo = getRoleInfo(member.role);
+              return (
+                <div key={member.id} className="p-4 bg-gray-800/50 rounded-xl border border-gray-700 flex flex-col gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-14 h-14 rounded-full overflow-hidden flex-shrink-0 border-2 border-lime-500 bg-gray-800 flex items-center justify-center">
+                      {member.photo ? (
+                        <img src={member.photo} alt={member.name} className="w-full h-full object-cover" />
+                      ) : member.emoji ? (
+                        <span className="text-3xl">{member.emoji}</span>
+                      ) : (
+                        <div className="w-full h-full bg-lime-600 flex items-center justify-center text-xl font-bold text-gray-900">
+                          {member.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
                     </div>
-                  )}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-gray-200 truncate">{member.name}</p>
+                      {member.email && <p className="text-xs text-gray-500 truncate">{member.email}</p>}
+                      <span className={`mt-1 inline-block text-xs px-2 py-0.5 rounded-full ${roleInfo.color}`}>{roleInfo.label}</span>
+                    </div>
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button onClick={() => openEdit(member)} className="p-2 hover:bg-gray-700 rounded-lg">
+                        <Edit2 size={15} className="text-gray-500" />
+                      </button>
+                      <button onClick={() => handleDelete(member.id)} className="p-2 hover:bg-red-900/50 rounded-lg">
+                        <Trash2 size={15} className="text-red-500" />
+                      </button>
+                    </div>
+                  </div>
+                  {member.bio && <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">{member.bio}</p>}
+                  <div className="flex gap-3 text-xs text-gray-500">
+                    {member.birthday && <span>🎂 {member.birthday}</span>}
+                    {member.startDate && <span>📅 desde {member.startDate}</span>}
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-gray-200 truncate">{member.name}</p>
-                  {member.email && <p className="text-sm text-gray-500 truncate">{member.email}</p>}
-                </div>
-                <div className="flex gap-1">
-                  <button onClick={() => handleEdit(member)} className="p-2 hover:bg-gray-700 rounded-lg">
-                    <Edit2 size={16} className="text-gray-500" />
-                  </button>
-                  <button onClick={() => handleDelete(member.id)} className="p-2 hover:bg-red-900/50 rounded-lg">
-                    <Trash2 size={16} className="text-red-500" />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="text-center py-12 text-gray-600">
             <Users size={48} className="mx-auto mb-4 opacity-50" />
             <p>Nenhum membro cadastrado</p>
-            <p className="text-sm mt-1">Adicione membros da equipe para atribuir responsáveis aos leads</p>
+            <p className="text-sm mt-1">Adicione membros da equipe para gerenciar acessos e perfis</p>
           </div>
         )}
       </Card>
 
-      {/* Estatísticas da Equipe */}
+      {/* Permissões por Cargo */}
+      <Card className="p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="p-2 rounded-lg bg-purple-500/20">
+            <Lock size={20} className="text-purple-400" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-gray-100">Permissões por Cargo</h3>
+            <p className="text-sm text-gray-500">Abas acessíveis para cada função</p>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-700">
+                <th className="text-left py-2 pr-4 text-gray-400 font-medium">Aba</th>
+                {ROLES.map(r => (
+                  <th key={r.id} className="text-center py-2 px-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${r.color}`}>{r.label}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(ALL_TAB_LABELS).map(([tabId, tabLabel]) => (
+                <tr key={tabId} className="border-b border-gray-800/50">
+                  <td className="py-2 pr-4 text-gray-300">{tabLabel}</td>
+                  {ROLES.map(r => (
+                    <td key={r.id} className="text-center py-2 px-3">
+                      {(ROLE_TABS[r.id] || []).includes(tabId)
+                        ? <span className="text-lime-400">✓</span>
+                        : <span className="text-gray-700">—</span>}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* Convidar membro */}
+      <Card className="p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 rounded-lg bg-cyan-500/20">
+            <UserPlus size={20} className="text-cyan-400" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-gray-100">Convidar Membro</h3>
+            <p className="text-sm text-gray-500">Como dar acesso ao sistema para um novo membro</p>
+          </div>
+        </div>
+        <div className="space-y-3 text-sm text-gray-400">
+          <div className="flex gap-3 items-start">
+            <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">1</span>
+            <p>Cadastre o membro aqui em <strong className="text-gray-200">Equipe Geral</strong> com o e-mail que ele usará para entrar.</p>
+          </div>
+          <div className="flex gap-3 items-start">
+            <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
+            <p>No painel do Supabase, vá em <strong className="text-gray-200">Authentication → Users</strong> e convide o e-mail do membro.</p>
+          </div>
+          <div className="flex gap-3 items-start">
+            <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
+            <p>Execute o SQL abaixo no Supabase para criar a tabela de membros (apenas na primeira vez):</p>
+          </div>
+          <pre className="bg-gray-900 rounded-lg p-3 text-xs text-gray-300 overflow-x-auto border border-gray-700">{`CREATE TABLE IF NOT EXISTS studio_members (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  member_email TEXT NOT NULL UNIQUE,
+  owner_user_id TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'designer',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE studio_members ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "member_read_own" ON studio_members FOR SELECT
+  USING (member_email = (auth.jwt()->>'email'));
+CREATE POLICY "owner_manage" ON studio_members FOR ALL
+  USING (owner_user_id = (auth.uid())::text);`}</pre>
+          <div className="flex gap-3 items-start">
+            <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">4</span>
+            <p>O membro faz login com a conta dele e enxerga os dados do estúdio com as abas permitidas pelo cargo.</p>
+          </div>
+        </div>
+      </Card>
+
+      {/* Performance */}
       {teamMembers.length > 0 && (
         <Card className="p-6">
           <h3 className="text-lg font-bold text-gray-100 mb-4">Performance da Equipe</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {teamMembers.map(member => {
-              const memberLeads = data.leads.filter(l => l.responsibleId == member.id);
-              const memberClients = data.clients.filter(c => c.responsibleId == member.id);
+              const memberLeads = (data.leads || []).filter(l => l.responsibleId == member.id);
+              const memberClients = (data.clients || []).filter(c => c.responsibleId == member.id);
               const memberRevenue = memberClients.reduce((acc, c) => acc + (c.value || 0), 0);
-              
+              const roleInfo = getRoleInfo(member.role);
               return (
                 <div key={member.id} className="p-4 bg-gray-800/30 rounded-xl border border-gray-700">
                   <div className="flex items-center gap-3 mb-3">
-                    <div className="w-10 h-10 rounded-full overflow-hidden border border-gray-600">
+                    <div className="w-10 h-10 rounded-full overflow-hidden border border-gray-600 bg-gray-800 flex items-center justify-center">
                       {member.photo ? (
                         <img src={member.photo} alt={member.name} className="w-full h-full object-cover" />
+                      ) : member.emoji ? (
+                        <span className="text-xl">{member.emoji}</span>
                       ) : (
                         <div className="w-full h-full bg-lime-600 flex items-center justify-center font-bold text-gray-900">
                           {member.name.charAt(0).toUpperCase()}
                         </div>
                       )}
                     </div>
-                    <p className="font-medium text-gray-200">{member.name}</p>
+                    <div>
+                      <p className="font-medium text-gray-200">{member.name}</p>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${roleInfo.color}`}>{roleInfo.label}</span>
+                    </div>
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div>
@@ -7979,41 +8127,125 @@ const SettingsView = ({ data, updateData }) => {
       )}
 
       {/* Modal Novo/Editar Membro */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingMember ? "Editar Membro" : "Novo Membro"} size="sm">
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingMember ? "Editar Membro" : "Novo Membro"} size="md">
         <div className="space-y-4">
-          {/* Upload de foto */}
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-24 h-24 rounded-full overflow-hidden border-2 border-gray-700 bg-gray-800">
-              {formData.photo ? (
-                <img src={formData.photo} alt="Preview" className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <User size={40} className="text-gray-600" />
-                </div>
+          {/* Avatar: emoji ou foto */}
+          <div className="flex items-center gap-4">
+            <div className="relative">
+              <div
+                className="w-20 h-20 rounded-full overflow-hidden border-2 border-gray-600 bg-gray-800 flex items-center justify-center cursor-pointer hover:border-lime-500 transition-colors"
+                onClick={() => setShowEmojiPicker(v => !v)}
+              >
+                {formData.photo ? (
+                  <img src={formData.photo} alt="Preview" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-4xl">{formData.emoji || "😀"}</span>
+                )}
+              </div>
+              <button
+                className="absolute -bottom-1 -right-1 w-6 h-6 bg-lime-500 rounded-full flex items-center justify-center"
+                onClick={() => setShowEmojiPicker(v => !v)}
+              >
+                <Smile size={13} className="text-gray-900" />
+              </button>
+            </div>
+            <div className="flex-1 space-y-2">
+              <p className="text-xs text-gray-500">Clique no avatar para escolher emoji, ou:</p>
+              <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-1.5 bg-gray-800 text-gray-300 rounded-lg text-xs hover:bg-gray-700 transition-colors">
+                <Image size={13} />
+                {formData.photo ? "Trocar foto" : "Upload de foto"}
+                <input type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
+              </label>
+              {formData.photo && (
+                <button onClick={() => setFormData(f => ({ ...f, photo: "" }))} className="ml-2 text-xs text-red-400 hover:text-red-300">Remover foto</button>
               )}
             </div>
-            <label className="cursor-pointer">
-              <span className="px-4 py-2 bg-gray-800 text-gray-300 rounded-xl text-sm hover:bg-gray-700 transition-colors inline-flex items-center gap-2">
-                <Image size={16} />
-                {formData.photo ? "Trocar foto" : "Adicionar foto"}
-              </span>
-              <input type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
-            </label>
           </div>
 
-          <Input 
-            label="Nome" 
-            value={formData.name} 
-            onChange={(v) => setFormData({...formData, name: v})} 
-            placeholder="Nome do membro"
-          />
-          <Input 
-            label="Email (opcional)" 
-            type="email"
-            value={formData.email} 
-            onChange={(v) => setFormData({...formData, email: v})} 
-            placeholder="email@exemplo.com"
-          />
+          {/* Emoji picker */}
+          {showEmojiPicker && (
+            <div className="bg-gray-900 border border-gray-700 rounded-xl p-3 max-h-48 overflow-y-auto">
+              <div className="flex flex-wrap gap-1">
+                {EMOJI_LIST.map((em, i) => (
+                  <button
+                    key={i}
+                    className={`text-xl p-1 rounded hover:bg-gray-700 transition-colors ${formData.emoji === em ? "bg-lime-500/30 ring-1 ring-lime-500" : ""}`}
+                    onClick={() => { setFormData(f => ({ ...f, emoji: em, photo: "" })); setShowEmojiPicker(false); }}
+                  >
+                    {em}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="Nome *" value={formData.name} onChange={v => setFormData(f => ({ ...f, name: v }))} placeholder="Nome completo" />
+            <Input label="Email (login)" type="email" value={formData.email} onChange={v => setFormData(f => ({ ...f, email: v }))} placeholder="email@exemplo.com" />
+          </div>
+
+          {/* Cargo / Role */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Cargo / Função</label>
+            <div className="flex flex-wrap gap-2">
+              {ROLES.map(r => (
+                <button
+                  key={r.id}
+                  onClick={() => setFormData(f => ({ ...f, role: r.id }))}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                    formData.role === r.id
+                      ? `${r.color} ring-2 ring-offset-1 ring-offset-gray-900 ring-lime-500`
+                      : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">Bio</label>
+            <textarea
+              value={formData.bio}
+              onChange={e => setFormData(f => ({ ...f, bio: e.target.value }))}
+              placeholder="Uma breve descrição sobre este membro..."
+              rows={2}
+              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-gray-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-lime-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">Metas do Ano</label>
+            <textarea
+              value={formData.goals}
+              onChange={e => setFormData(f => ({ ...f, goals: e.target.value }))}
+              placeholder="Objetivos e metas para este ano..."
+              rows={2}
+              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-gray-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-lime-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Data de Aniversário</label>
+              <input
+                type="date"
+                value={formData.birthday}
+                onChange={e => setFormData(f => ({ ...f, birthday: e.target.value }))}
+                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Entrada na Empresa</label>
+              <input
+                type="date"
+                value={formData.startDate}
+                onChange={e => setFormData(f => ({ ...f, startDate: e.target.value }))}
+                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+              />
+            </div>
+          </div>
         </div>
         <div className="flex justify-end gap-3 mt-6">
           <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancelar</Button>
@@ -10283,19 +10515,35 @@ const PautasView = ({ data, updateData }) => {
 // Main App
 export default function HypefocoCRM() {
   const [user, setUser] = useState(null);
+  const [memberInfo, setMemberInfo] = useState(null); // { owner_user_id, role } if team member
   const [authLoading, setAuthLoading] = useState(true);
   const [activeView, setActiveView] = useState("home");
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [data, updateData, isLoading, saveStatus] = usePersistedState(STORAGE_KEY, initialData, user);
+
+  // Use the studio owner's user_id for data if this is a team member login
+  const effectiveUser = memberInfo ? { ...user, id: memberInfo.owner_user_id } : user;
+  const [data, updateData, isLoading, saveStatus] = usePersistedState(STORAGE_KEY, initialData, effectiveUser);
 
   // Verificar sessão ao carregar
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      const u = session?.user ?? null;
+      setUser(u);
+      if (u) {
+        const info = await checkTeamMember(u.email);
+        setMemberInfo(info);
+      }
       setAuthLoading(false);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      const u = session?.user ?? null;
+      setUser(u);
+      if (u) {
+        const info = await checkTeamMember(u.email);
+        setMemberInfo(info);
+      } else {
+        setMemberInfo(null);
+      }
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -10303,6 +10551,7 @@ export default function HypefocoCRM() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUser(null);
+    setMemberInfo(null);
   };
 
   if (authLoading) {
@@ -10333,14 +10582,14 @@ export default function HypefocoCRM() {
       case "financial": return <FinancialView data={data} updateData={updateData} />;
       case "investment": return <InvestmentView data={data} updateData={updateData} />;
       case "data": return <DataView data={data} updateData={updateData} />;
-      case "settings": return <SettingsView data={data} updateData={updateData} />;
+      case "settings": return <SettingsView data={data} updateData={updateData} user={user} />;
       default: return <HomeView data={data} updateData={updateData} />;
     }
   };
 
   return (
     <div className="min-h-screen bg-gray-950 flex">
-      <Sidebar activeView={activeView} setActiveView={setActiveView} isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} user={user} onLogout={handleLogout} saveStatus={saveStatus} />
+      <Sidebar activeView={activeView} setActiveView={setActiveView} isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} user={user} onLogout={handleLogout} saveStatus={saveStatus} memberRole={memberInfo?.role ?? null} />
       <main className="flex-1 p-4 md:p-8 overflow-auto">{renderView()}</main>
     </div>
   );
