@@ -9711,6 +9711,75 @@ const PautasView = ({ data, updateData }) => {
     return Math.max(0, (h2 * 60 + m2 - (h1 * 60 + m1)) / 60);
   };
 
+  // ── Smart scheduling helpers ───────────────────────────────────────────────
+  const timeToMins = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+  const minsToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
+  // Returns free time slots on a day (work hours minus lunch minus events)
+  const getAvailableSlots = (memberId, dateStr) => {
+    const s = getMemberSchedule(memberId);
+    let slots = [{ start: timeToMins(s.workStart), end: timeToMins(s.workEnd) }];
+    const subtract = (slots, from, to) => {
+      const r = [];
+      for (const sl of slots) {
+        if (to <= sl.start || from >= sl.end) { r.push(sl); continue; }
+        if (from > sl.start) r.push({ start: sl.start, end: from });
+        if (to < sl.end) r.push({ start: to, end: sl.end });
+      }
+      return r;
+    };
+    slots = subtract(slots, timeToMins(s.lunchStart), timeToMins(s.lunchEnd));
+    for (const ev of (pautas.events || []).filter((e) => e.memberId === memberId && e.date === dateStr)) {
+      slots = subtract(slots, timeToMins(ev.startTime), timeToMins(ev.endTime));
+    }
+    return slots.filter((sl) => sl.end > sl.start);
+  };
+
+  // Calculates which day-blocks a task occupies, respecting schedule, lunch and events
+  const calculateTaskBlocks = (memberId, startDate, startTimeMins, totalHours) => {
+    let remaining = Math.round(totalHours * 60);
+    let d = new Date(startDate + "T12:00:00"); // noon avoids DST edge cases
+    let curMins = startTimeMins;
+    const blocks = [];
+    let safety = 0;
+    while (remaining > 0 && safety++ < 90) {
+      const dateStr = toISODate(d);
+      const schedule = getMemberSchedule(memberId);
+      if (!schedule.workDays.includes(d.getDay())) {
+        d = addDays(d, 1);
+        curMins = timeToMins(schedule.workStart);
+        continue;
+      }
+      const slots = getAvailableSlots(memberId, dateStr);
+      let dayStart = null, dayEnd = null, dayMins = 0;
+      for (const slot of slots) {
+        if (slot.end <= curMins) continue;
+        const from = Math.max(slot.start, curMins);
+        const avail = slot.end - from;
+        if (avail <= 0) continue;
+        if (dayStart === null) dayStart = from;
+        if (remaining <= avail) {
+          dayEnd = from + remaining;
+          dayMins += remaining;
+          remaining = 0;
+          break;
+        } else {
+          dayEnd = slot.end;
+          dayMins += avail;
+          remaining -= avail;
+        }
+      }
+      if (dayStart !== null && dayMins > 0) {
+        blocks.push({ date: dateStr, startTime: minsToTime(dayStart), endTime: minsToTime(dayEnd), hours: dayMins / 60 });
+      }
+      if (remaining > 0) {
+        d = addDays(d, 1);
+        curMins = timeToMins(getMemberSchedule(memberId).workStart);
+      }
+    }
+    return blocks;
+  };
+
   // ── Schedule helpers ──────────────────────────────────────────────────────
   const getMemberSchedule = (memberId) =>
     (pautas.employeeSchedules || {})[memberId] || {
@@ -9732,15 +9801,28 @@ const PautasView = ({ data, updateData }) => {
   const MONTH_LABELS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
   // ── Slot data getters ─────────────────────────────────────────────────────
+  // Returns assignments that have a work block on dateStr (supports multi-day tasks)
   const getAssignmentsForSlot = (memberId, dateStr) =>
-    (pautas.assignments || []).filter((a) => a.memberId === memberId && a.date === dateStr);
+    (pautas.assignments || [])
+      .filter((a) => a.memberId === memberId)
+      .map((a) => {
+        const sd = a.startDate || a.date; // backward compat
+        const st = timeToMins(a.startTime || getMemberSchedule(memberId).workStart);
+        const blocks = calculateTaskBlocks(memberId, sd, st, a.estimatedHours || 4);
+        const blockIdx = blocks.findIndex((b) => b.date === dateStr);
+        if (blockIdx === -1) return null;
+        return { ...a, block: blocks[blockIdx], dayIndex: blockIdx + 1, totalDays: blocks.length };
+      })
+      .filter(Boolean);
+
   const getEventsForSlot = (memberId, dateStr) =>
     (pautas.events || []).filter((e) => e.memberId === memberId && e.date === dateStr);
 
   const getCapacityForDay = (memberId, dateStr) => {
     const available = getAvailableHours(memberId);
     if (available <= 0) return { available: 0, used: 0, percentage: 0 };
-    const assignedH = getAssignmentsForSlot(memberId, dateStr).reduce((s, a) => s + (a.estimatedHours || 0), 0);
+    // Use block hours for this day (already excludes lunch/events via calculateTaskBlocks)
+    const assignedH = getAssignmentsForSlot(memberId, dateStr).reduce((s, a) => s + (a.block?.hours || 0), 0);
     const eventH = getEventsForSlot(memberId, dateStr).reduce((s, e) => s + timeDiffHours(e.startTime, e.endTime), 0);
     const used = assignedH + eventH;
     return { available, used, percentage: (used / available) * 100 };
@@ -9775,13 +9857,18 @@ const PautasView = ({ data, updateData }) => {
   const handleDrop = (e, memberId, dateStr) => {
     e.preventDefault();
     if (!draggedItem) { setDragOverSlot(null); return; }
+    const schedule = getMemberSchedule(memberId);
     if (draggedItem.type === "backlog") {
       const card = draggedItem.card;
-      const newAssignment = { id: Date.now(), cardId: card.id, memberId, date: dateStr, estimatedHours: card.estimatedHours || 4 };
+      const newAssignment = {
+        id: Date.now(), cardId: card.id, memberId,
+        startDate: dateStr, startTime: schedule.workStart,
+        estimatedHours: card.estimatedHours || 4,
+      };
       updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), assignments: [...(prev.pautas?.assignments || []), newAssignment] } }));
     } else if (draggedItem.type === "assignment") {
       const { assignment } = draggedItem;
-      updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), assignments: (prev.pautas?.assignments || []).map((a) => a.id === assignment.id ? { ...a, memberId, date: dateStr } : a) } }));
+      updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), assignments: (prev.pautas?.assignments || []).map((a) => a.id === assignment.id ? { ...a, memberId, startDate: dateStr, startTime: schedule.workStart } : a) } }));
     }
     setDraggedItem(null);
     setDragOverSlot(null);
@@ -10036,6 +10123,10 @@ const PautasView = ({ data, updateData }) => {
                       const col = columns.find((c) => c.id === card.columnId);
                       const color = col?.color || "#6b7280";
                       const isDraggingThis = draggedItem?.type === "assignment" && draggedItem?.assignment?.id === assignment.id;
+                      const block = assignment.block;
+                      const isFirst = assignment.dayIndex === 1;
+                      const isLast = assignment.dayIndex === assignment.totalDays;
+                      const isMultiDay = assignment.totalDays > 1;
                       return (
                         <div
                           key={assignment.id}
@@ -10043,14 +10134,32 @@ const PautasView = ({ data, updateData }) => {
                           onDragStart={(e) => handleDragStart(e, { type: "assignment", assignment, card })}
                           onDragEnd={() => setDraggedItem(null)}
                           className={`group relative rounded-lg p-1.5 cursor-grab active:cursor-grabbing transition-all select-none ${isDraggingThis ? "opacity-40 scale-95" : "hover:opacity-90"}`}
-                          style={{ backgroundColor: color + "1a", borderLeft: `3px solid ${color}` }}
+                          style={{
+                            backgroundColor: color + "1a",
+                            borderLeft: `3px solid ${color}`,
+                            borderRight: isMultiDay && !isLast ? `2px dashed ${color}` : undefined,
+                            opacity: isDraggingThis ? 0.4 : 1,
+                          }}
                         >
-                          <p className="text-xs font-semibold truncate pr-4 leading-tight" style={{ color }}>{card.name}</p>
+                          <div className="flex items-center gap-0.5">
+                            {!isFirst && <ChevronLeft size={9} style={{ color }} className="flex-shrink-0 opacity-70" />}
+                            <p className="text-xs font-semibold truncate leading-tight flex-1 pr-3" style={{ color }}>{card.name}</p>
+                            {!isLast && <ChevronRight size={9} style={{ color }} className="flex-shrink-0 opacity-70" />}
+                          </div>
                           <div className="flex items-center gap-1 mt-0.5">
                             <Clock size={9} className="text-gray-500" />
-                            <span className="text-xs text-gray-500">{assignment.estimatedHours}h</span>
-                            {col && <span className="text-xs ml-auto opacity-60" style={{ color }}>{col.name}</span>}
+                            <span className="text-xs text-gray-500">{block?.hours.toFixed(1)}h</span>
+                            {isMultiDay && (
+                              <span className="text-xs ml-auto font-medium opacity-60" style={{ color }}>
+                                {assignment.dayIndex}/{assignment.totalDays}d
+                              </span>
+                            )}
                           </div>
+                          {isFirst && (
+                            <p className="text-xs text-gray-600 mt-0.5">
+                              {block?.startTime}–{block?.endTime} • {assignment.estimatedHours}h total
+                            </p>
+                          )}
                           <button
                             onClick={() => handleDeleteAssignment(assignment.id)}
                             className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity"
