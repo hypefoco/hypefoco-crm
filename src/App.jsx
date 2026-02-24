@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from "recharts";
-import { Users, TrendingUp, DollarSign, Plus, Search, X, Edit2, Trash2, ChevronDown, Calendar, Target, LayoutDashboard, ArrowUpRight, ArrowDownRight, Megaphone, Calculator, UserX, MessageSquare, Check, Clock, Percent, TrendingDown, Download, Upload, FileSpreadsheet, Menu, ChevronLeft, Phone, Video, Mail, FileText, Send, CalendarDays, AlertCircle, Settings, UserPlus, Image, User, Wallet, Receipt, CreditCard, PiggyBank, ChevronRight, FileCheck, Ban, RefreshCw, FolderKanban, GripVertical, Palette, MoreHorizontal, Link2, CircleDot, Building, UserCog, Coins, Layers, Package, Eye, LogOut, Lock } from "lucide-react";
+import { Users, TrendingUp, DollarSign, Plus, Search, X, Edit2, Trash2, ChevronDown, Calendar, Target, LayoutDashboard, ArrowUpRight, ArrowDownRight, Megaphone, Calculator, UserX, MessageSquare, Check, Clock, Percent, TrendingDown, Download, Upload, FileSpreadsheet, Menu, ChevronLeft, Phone, Video, Mail, FileText, Send, CalendarDays, AlertCircle, Settings, UserPlus, Image, User, Wallet, Receipt, CreditCard, PiggyBank, ChevronRight, FileCheck, Ban, RefreshCw, FolderKanban, GripVertical, Palette, MoreHorizontal, Link2, CircleDot, Building, UserCog, Coins, Layers, Package, Eye, LogOut, Lock, BarChart2 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 
 // ============================================
@@ -113,6 +113,11 @@ const initialData = {
       expense: ["Custos Fixos", "Salários", "Freelancer", "Comissão", "Investimentos", "Parcelamentos", "Impostos", "Marketing", "Ferramentas", "Outros"],
       income: ["Identidade Visual", "Rebranding", "Projeto Gráfico", "Editorial", "Motion Design", "Embalagem", "Audiovisual", "Outro"]
     }
+  },
+  pautas: {
+    employeeSchedules: {},
+    assignments: [],
+    events: [],
   },
   lossReasons: [
     "Preço acima do orçamento",
@@ -610,6 +615,7 @@ const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user,
     { id: "comercial", label: "Comercial", icon: TrendingUp },
     { id: "pipeline", label: "Pipeline", icon: Target },
     { id: "projects", label: "Projetos", icon: FolderKanban },
+    { id: "pautas", label: "Pautas", icon: BarChart2 },
     { id: "budgets", label: "Orçamentos", icon: Calculator },
     { id: "activities", label: "Atividades", icon: CalendarDays },
     { id: "clients", label: "Clientes", icon: Users },
@@ -4438,8 +4444,8 @@ const ProjectsView = ({ data, updateData }) => {
   const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
   const [editingCard, setEditingCard] = useState(null);
   const [editingColumn, setEditingColumn] = useState(null);
-  const [cardForm, setCardForm] = useState({ 
-    name: "", description: "", clientId: "", linkedEntries: [], columnId: "", deadline: "" 
+  const [cardForm, setCardForm] = useState({
+    name: "", description: "", clientId: "", linkedEntries: [], columnId: "", deadline: "", estimatedHours: 0
   });
   const [columnForm, setColumnForm] = useState({ name: "", color: "#8b5cf6", icon: "clipboard" });
 
@@ -4538,7 +4544,7 @@ const ProjectsView = ({ data, updateData }) => {
     
     setIsCardModalOpen(false);
     setEditingCard(null);
-    setCardForm({ name: "", description: "", clientId: "", linkedEntries: [], columnId: "", deadline: "" });
+    setCardForm({ name: "", description: "", clientId: "", linkedEntries: [], columnId: "", deadline: "", estimatedHours: 0 });
   };
 
   const handleEditCard = (card) => {
@@ -4820,15 +4826,23 @@ const ProjectsView = ({ data, updateData }) => {
             />
           </div>
           
+          <Input
+            label="Horas Estimadas"
+            type="number"
+            value={cardForm.estimatedHours || ""}
+            onChange={(v) => setCardForm({...cardForm, estimatedHours: parseFloat(v) || 0})}
+            placeholder="Ex: 8"
+          />
+
           <Select
             label="Vincular a Cliente"
             value={cardForm.clientId?.toString() || ""}
             onChange={(v) => setCardForm({...cardForm, clientId: v ? parseInt(v) : ""})}
             options={[
               { value: "", label: "Nenhum cliente" },
-              ...clients.map(c => ({ 
-                value: c.id.toString(), 
-                label: `${c.name}${c.company ? ` - ${c.company}` : ''}` 
+              ...clients.map(c => ({
+                value: c.id.toString(),
+                label: `${c.name}${c.company ? ` - ${c.company}` : ''}`
               }))
             ]}
           />
@@ -9650,6 +9664,513 @@ const LoadingScreen = () => (
   </div>
 );
 
+// ─── Gestão de Pautas ───────────────────────────────────────────────────────
+const PautasView = ({ data, updateData }) => {
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [draggedItem, setDraggedItem] = useState(null);
+  const [dragOverSlot, setDragOverSlot] = useState(null);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [selectedMemberId, setSelectedMemberId] = useState(null);
+  const [scheduleForm, setScheduleForm] = useState({
+    workStart: "09:00", workEnd: "18:00",
+    lunchStart: "12:00", lunchEnd: "13:00",
+    workDays: [1, 2, 3, 4, 5],
+  });
+  const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [eventForm, setEventForm] = useState({
+    title: "", type: "meeting", date: "", startTime: "09:00", endTime: "10:00", memberId: "",
+  });
+  const [editingEventId, setEditingEventId] = useState(null);
+
+  const teamMembers = data.teamMembers || [];
+  const cards = data.projects?.cards || [];
+  const columns = data.projects?.columns || [];
+  const pautas = data.pautas || { assignments: [], events: [], employeeSchedules: {} };
+
+  // ── Date helpers ──────────────────────────────────────────────────────────
+  const getMondayOf = (date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    d.setDate(diff);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+  const addDays = (date, n) => {
+    const d = new Date(date);
+    d.setDate(d.getDate() + n);
+    return d;
+  };
+  const toISODate = (date) => {
+    const d = new Date(date);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const timeDiffHours = (t1, t2) => {
+    const [h1, m1] = t1.split(":").map(Number);
+    const [h2, m2] = t2.split(":").map(Number);
+    return Math.max(0, (h2 * 60 + m2 - (h1 * 60 + m1)) / 60);
+  };
+
+  // ── Schedule helpers ──────────────────────────────────────────────────────
+  const getMemberSchedule = (memberId) =>
+    (pautas.employeeSchedules || {})[memberId] || {
+      workStart: "09:00", workEnd: "18:00",
+      lunchStart: "12:00", lunchEnd: "13:00",
+      workDays: [1, 2, 3, 4, 5],
+    };
+  const getAvailableHours = (memberId) => {
+    const s = getMemberSchedule(memberId);
+    return timeDiffHours(s.workStart, s.workEnd) - timeDiffHours(s.lunchStart, s.lunchEnd);
+  };
+
+  // ── Week calculation ──────────────────────────────────────────────────────
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const weekStart = addDays(getMondayOf(today), weekOffset * 7);
+  const weekDays = [0, 1, 2, 3, 4].map((i) => addDays(weekStart, i));
+  const DAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+  const MONTH_LABELS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
+  // ── Slot data getters ─────────────────────────────────────────────────────
+  const getAssignmentsForSlot = (memberId, dateStr) =>
+    (pautas.assignments || []).filter((a) => a.memberId === memberId && a.date === dateStr);
+  const getEventsForSlot = (memberId, dateStr) =>
+    (pautas.events || []).filter((e) => e.memberId === memberId && e.date === dateStr);
+
+  const getCapacityForDay = (memberId, dateStr) => {
+    const available = getAvailableHours(memberId);
+    if (available <= 0) return { available: 0, used: 0, percentage: 0 };
+    const assignedH = getAssignmentsForSlot(memberId, dateStr).reduce((s, a) => s + (a.estimatedHours || 0), 0);
+    const eventH = getEventsForSlot(memberId, dateStr).reduce((s, e) => s + timeDiffHours(e.startTime, e.endTime), 0);
+    const used = assignedH + eventH;
+    return { available, used, percentage: (used / available) * 100 };
+  };
+  const getWeekCapacity = (memberId) => {
+    let totalAvail = 0, totalUsed = 0;
+    weekDays.forEach((d) => {
+      const s = getMemberSchedule(memberId);
+      if (s.workDays.includes(d.getDay())) {
+        const cap = getCapacityForDay(memberId, toISODate(d));
+        totalAvail += cap.available;
+        totalUsed += cap.used;
+      }
+    });
+    return { available: totalAvail, used: totalUsed, percentage: totalAvail > 0 ? (totalUsed / totalAvail) * 100 : 0 };
+  };
+
+  // ── Backlog ───────────────────────────────────────────────────────────────
+  const assignedCardIds = new Set((pautas.assignments || []).map((a) => a.cardId));
+  const backlog = cards.filter((c) => !assignedCardIds.has(c.id) && c.columnId !== "entregue");
+
+  // ── Drag & Drop ───────────────────────────────────────────────────────────
+  const handleDragStart = (e, item) => {
+    setDraggedItem(item);
+    e.dataTransfer.effectAllowed = "move";
+  };
+  const handleDragOver = (e, memberId, dateStr) => {
+    e.preventDefault();
+    setDragOverSlot({ memberId, dateStr });
+  };
+  const handleDragLeave = () => setDragOverSlot(null);
+  const handleDrop = (e, memberId, dateStr) => {
+    e.preventDefault();
+    if (!draggedItem) { setDragOverSlot(null); return; }
+    if (draggedItem.type === "backlog") {
+      const card = draggedItem.card;
+      const newAssignment = { id: Date.now(), cardId: card.id, memberId, date: dateStr, estimatedHours: card.estimatedHours || 4 };
+      updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), assignments: [...(prev.pautas?.assignments || []), newAssignment] } }));
+    } else if (draggedItem.type === "assignment") {
+      const { assignment } = draggedItem;
+      updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), assignments: (prev.pautas?.assignments || []).map((a) => a.id === assignment.id ? { ...a, memberId, date: dateStr } : a) } }));
+    }
+    setDraggedItem(null);
+    setDragOverSlot(null);
+  };
+  const handleDeleteAssignment = (assignmentId) => {
+    updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), assignments: (prev.pautas?.assignments || []).filter((a) => a.id !== assignmentId) } }));
+  };
+
+  // ── Schedule modal ────────────────────────────────────────────────────────
+  const openScheduleModal = (member) => {
+    setSelectedMemberId(member.id);
+    setScheduleForm(getMemberSchedule(member.id));
+    setIsScheduleModalOpen(true);
+  };
+  const handleSaveSchedule = () => {
+    updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), employeeSchedules: { ...(prev.pautas?.employeeSchedules || {}), [selectedMemberId]: scheduleForm } } }));
+    setIsScheduleModalOpen(false);
+  };
+
+  // ── Event modal ───────────────────────────────────────────────────────────
+  const openEventModal = (memberId, dateStr) => {
+    setEditingEventId(null);
+    setEventForm({ title: "", type: "meeting", date: dateStr, startTime: "09:00", endTime: "10:00", memberId });
+    setIsEventModalOpen(true);
+  };
+  const handleSaveEvent = () => {
+    if (!eventForm.title || !eventForm.date) return;
+    if (editingEventId) {
+      updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), events: (prev.pautas?.events || []).map((ev) => ev.id === editingEventId ? { ...eventForm, id: editingEventId } : ev) } }));
+    } else {
+      updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), events: [...(prev.pautas?.events || []), { ...eventForm, id: Date.now() }] } }));
+    }
+    setIsEventModalOpen(false);
+  };
+  const handleDeleteEvent = (eventId) => {
+    updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), events: (prev.pautas?.events || []).filter((ev) => ev.id !== eventId) } }));
+  };
+
+  // ── Empty state ───────────────────────────────────────────────────────────
+  if (teamMembers.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-96 gap-4">
+        <div className="p-8 rounded-2xl bg-gray-900 border border-gray-800 text-center max-w-sm">
+          <Users size={48} className="text-gray-600 mx-auto mb-4" />
+          <h2 className="text-xl font-bold text-gray-300 mb-2">Nenhum membro cadastrado</h2>
+          <p className="text-gray-500 text-sm">Acesse <strong className="text-gray-300">Configurações → Membros</strong> para adicionar a equipe antes de usar a Gestão de Pautas.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-100">Gestão de Pautas</h1>
+          <p className="text-gray-500 text-sm">Distribuição de tarefas da equipe</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setWeekOffset((w) => w - 1)} className="p-2 rounded-xl bg-gray-900 hover:bg-gray-800 text-gray-300 border border-gray-800 transition-colors">
+            <ChevronLeft size={18} />
+          </button>
+          <button onClick={() => setWeekOffset(0)} className="px-4 py-2 rounded-xl bg-gray-900 hover:bg-gray-800 text-gray-300 border border-gray-800 transition-colors text-sm font-medium">
+            Semana Atual
+          </button>
+          <button onClick={() => setWeekOffset((w) => w + 1)} className="p-2 rounded-xl bg-gray-900 hover:bg-gray-800 text-gray-300 border border-gray-800 transition-colors">
+            <ChevronRight size={18} />
+          </button>
+          <span className="text-gray-500 text-sm ml-1">
+            {weekDays[0].getDate()} {MONTH_LABELS[weekDays[0].getMonth()]} – {weekDays[4].getDate()} {MONTH_LABELS[weekDays[4].getMonth()]} {weekDays[4].getFullYear()}
+          </span>
+        </div>
+      </div>
+
+      {/* Capacity cards */}
+      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(teamMembers.length, 4)}, 1fr)` }}>
+        {teamMembers.map((member) => {
+          const cap = getWeekCapacity(member.id);
+          const pct = cap.percentage;
+          const colorText = pct > 100 ? "text-red-400" : pct > 80 ? "text-amber-400" : "text-emerald-400";
+          const colorBar = pct > 100 ? "bg-red-500" : pct > 80 ? "bg-amber-500" : "bg-emerald-500";
+          return (
+            <div key={member.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+              <div className="flex items-center gap-3 mb-3">
+                {member.photo ? (
+                  <img src={member.photo} alt={member.name} className="w-9 h-9 rounded-full object-cover border border-gray-700" />
+                ) : (
+                  <div className="w-9 h-9 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center">
+                    <User size={18} className="text-gray-500" />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-200 truncate">{member.name}</p>
+                  <p className={`text-xs font-bold ${colorText}`}>{Math.round(pct)}% ocupado na semana</p>
+                </div>
+              </div>
+              <div className="w-full bg-gray-800 rounded-full h-1.5 mb-1">
+                <div className={`h-1.5 rounded-full transition-all ${colorBar}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+              </div>
+              <p className="text-xs text-gray-600">{cap.used.toFixed(1)}h alocadas / {cap.available.toFixed(1)}h disponíveis</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Backlog */}
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Package size={15} className="text-gray-400" />
+          <h2 className="text-sm font-semibold text-gray-300">Backlog — Tarefas não atribuídas</h2>
+          <span className="ml-auto text-xs text-gray-500 bg-gray-800 rounded-full px-2 py-0.5">{backlog.length}</span>
+        </div>
+        {backlog.length === 0 ? (
+          <p className="text-sm text-gray-600 text-center py-6">Todas as tarefas estão atribuídas ou não há projetos ativos.</p>
+        ) : (
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            {backlog.map((card) => {
+              const col = columns.find((c) => c.id === card.columnId);
+              const isDragging = draggedItem?.type === "backlog" && draggedItem?.card?.id === card.id;
+              return (
+                <div
+                  key={card.id}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, { type: "backlog", card })}
+                  onDragEnd={() => setDraggedItem(null)}
+                  className={`flex-shrink-0 w-48 p-3 rounded-xl border cursor-grab active:cursor-grabbing transition-all ${isDragging ? "opacity-40 scale-95" : "hover:border-lime-700"} bg-gray-800 border-gray-700`}
+                >
+                  <p className="text-sm font-semibold text-gray-200 truncate mb-2">{card.name}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    {col && (
+                      <span className="text-xs px-2 py-0.5 rounded-full font-medium truncate" style={{ backgroundColor: col.color + "22", color: col.color }}>
+                        {col.name}
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-400 flex items-center gap-1 flex-shrink-0 ml-auto">
+                      <Clock size={10} />
+                      {card.estimatedHours || "?"}h
+                    </span>
+                  </div>
+                  {card.deadline && (
+                    <p className="text-xs text-gray-600 mt-1.5 flex items-center gap-1">
+                      <Calendar size={10} />
+                      {card.deadline}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Gantt Grid */}
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+        {/* Day header row */}
+        <div className="flex border-b border-gray-800 bg-gray-950">
+          <div className="w-44 flex-shrink-0 border-r border-gray-800" />
+          {weekDays.map((day, i) => {
+            const isToday = toISODate(day) === toISODate(today);
+            return (
+              <div key={i} className={`flex-1 p-3 text-center border-r border-gray-800 last:border-r-0 ${isToday ? "bg-lime-950/40" : ""}`}>
+                <p className={`text-xs font-bold uppercase tracking-wider ${isToday ? "text-lime-400" : "text-gray-500"}`}>{DAY_LABELS[day.getDay()]}</p>
+                <p className={`text-2xl font-bold leading-tight ${isToday ? "text-lime-300" : "text-gray-300"}`}>{day.getDate()}</p>
+                <p className="text-xs text-gray-600">{MONTH_LABELS[day.getMonth()]}</p>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Employee rows */}
+        {teamMembers.map((member, mi) => {
+          const schedule = getMemberSchedule(member.id);
+          return (
+            <div key={member.id} className={`flex border-b border-gray-800 last:border-b-0 ${mi % 2 === 1 ? "bg-gray-950/40" : ""}`}>
+              {/* Member label */}
+              <div className="w-44 flex-shrink-0 p-3 border-r border-gray-800 flex items-start gap-2.5">
+                {member.photo ? (
+                  <img src={member.photo} alt={member.name} className="w-8 h-8 rounded-full object-cover border border-gray-700 flex-shrink-0 mt-0.5" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <User size={14} className="text-gray-500" />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-300 truncate">{member.name}</p>
+                  <button
+                    onClick={() => openScheduleModal(member)}
+                    className="text-xs text-gray-600 hover:text-lime-400 transition-colors flex items-center gap-1 mt-0.5"
+                    title="Configurar expediente"
+                  >
+                    <Clock size={10} />
+                    {schedule.workStart}–{schedule.workEnd}
+                  </button>
+                </div>
+              </div>
+
+              {/* Day cells */}
+              {weekDays.map((day, di) => {
+                const dateStr = toISODate(day);
+                const isWorkDay = schedule.workDays.includes(day.getDay());
+                const isToday = dateStr === toISODate(today);
+                const isOver = dragOverSlot?.memberId === member.id && dragOverSlot?.dateStr === dateStr;
+                const slotAssignments = getAssignmentsForSlot(member.id, dateStr);
+                const slotEvents = getEventsForSlot(member.id, dateStr);
+                const cap = isWorkDay ? getCapacityForDay(member.id, dateStr) : null;
+                const barColor = cap ? (cap.percentage > 100 ? "bg-red-500" : cap.percentage > 80 ? "bg-amber-500" : "bg-emerald-500") : "";
+                return (
+                  <div
+                    key={di}
+                    className={`flex-1 border-r border-gray-800 last:border-r-0 min-h-32 p-2 flex flex-col gap-1.5 transition-colors
+                      ${!isWorkDay ? "bg-gray-950/60" : ""}
+                      ${isToday ? "bg-lime-950/10" : ""}
+                      ${isOver ? "bg-lime-900/25 ring-1 ring-inset ring-lime-700" : ""}
+                    `}
+                    onDragOver={isWorkDay ? (e) => handleDragOver(e, member.id, dateStr) : undefined}
+                    onDragLeave={handleDragLeave}
+                    onDrop={isWorkDay ? (e) => handleDrop(e, member.id, dateStr) : undefined}
+                  >
+                    {/* Capacity bar */}
+                    {isWorkDay && cap && (
+                      <div className="flex items-center gap-1.5">
+                        <div className="flex-1 bg-gray-800 rounded-full h-1">
+                          <div className={`h-1 rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(cap.percentage, 100)}%` }} />
+                        </div>
+                        <span className="text-xs text-gray-600 tabular-nums">{cap.used.toFixed(0)}h</span>
+                      </div>
+                    )}
+                    {!isWorkDay && (
+                      <p className="text-xs text-gray-700 text-center mt-2">folga</p>
+                    )}
+
+                    {/* Event blocks */}
+                    {slotEvents.map((ev) => (
+                      <div key={ev.id} className="group relative bg-violet-900/40 border border-violet-800/60 rounded-lg p-1.5">
+                        <div className="flex items-center gap-1">
+                          <CalendarDays size={10} className="text-violet-400 flex-shrink-0" />
+                          <p className="text-xs text-violet-300 truncate font-medium">{ev.title}</p>
+                        </div>
+                        <p className="text-xs text-violet-500 mt-0.5">{ev.startTime}–{ev.endTime}</p>
+                        <button onClick={() => handleDeleteEvent(ev.id)} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <X size={10} className="text-violet-500 hover:text-red-400" />
+                        </button>
+                      </div>
+                    ))}
+
+                    {/* Assignment blocks */}
+                    {slotAssignments.map((assignment) => {
+                      const card = cards.find((c) => c.id === assignment.cardId);
+                      if (!card) return null;
+                      const col = columns.find((c) => c.id === card.columnId);
+                      const color = col?.color || "#6b7280";
+                      const isDraggingThis = draggedItem?.type === "assignment" && draggedItem?.assignment?.id === assignment.id;
+                      return (
+                        <div
+                          key={assignment.id}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, { type: "assignment", assignment, card })}
+                          onDragEnd={() => setDraggedItem(null)}
+                          className={`group relative rounded-lg p-1.5 cursor-grab active:cursor-grabbing transition-all select-none ${isDraggingThis ? "opacity-40 scale-95" : "hover:opacity-90"}`}
+                          style={{ backgroundColor: color + "1a", borderLeft: `3px solid ${color}` }}
+                        >
+                          <p className="text-xs font-semibold truncate pr-4 leading-tight" style={{ color }}>{card.name}</p>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <Clock size={9} className="text-gray-500" />
+                            <span className="text-xs text-gray-500">{assignment.estimatedHours}h</span>
+                            {col && <span className="text-xs ml-auto opacity-60" style={{ color }}>{col.name}</span>}
+                          </div>
+                          <button
+                            onClick={() => handleDeleteAssignment(assignment.id)}
+                            className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Remover atribuição"
+                          >
+                            <X size={10} className="text-gray-500 hover:text-red-400" />
+                          </button>
+                        </div>
+                      );
+                    })}
+
+                    {/* Add event button */}
+                    {isWorkDay && (
+                      <button
+                        onClick={() => openEventModal(member.id, dateStr)}
+                        className="mt-auto flex items-center justify-center gap-1 text-xs text-gray-700 hover:text-gray-400 transition-colors py-1 rounded-lg hover:bg-gray-800/60 w-full"
+                      >
+                        <Plus size={10} />
+                        evento
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Modal: Configurar Expediente */}
+      <Modal isOpen={isScheduleModalOpen} onClose={() => setIsScheduleModalOpen(false)} title="Configurar Expediente" size="sm">
+        {selectedMemberId && (() => {
+          const member = teamMembers.find((m) => m.id === selectedMemberId);
+          return (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-400">Expediente de <strong className="text-gray-200">{member?.name}</strong></p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Início</label>
+                  <input type="time" value={scheduleForm.workStart} onChange={(e) => setScheduleForm((f) => ({ ...f, workStart: e.target.value }))}
+                    className="w-full p-2 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 focus:border-lime-500 focus:outline-none text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Fim</label>
+                  <input type="time" value={scheduleForm.workEnd} onChange={(e) => setScheduleForm((f) => ({ ...f, workEnd: e.target.value }))}
+                    className="w-full p-2 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 focus:border-lime-500 focus:outline-none text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Início almoço</label>
+                  <input type="time" value={scheduleForm.lunchStart} onChange={(e) => setScheduleForm((f) => ({ ...f, lunchStart: e.target.value }))}
+                    className="w-full p-2 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 focus:border-lime-500 focus:outline-none text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Fim almoço</label>
+                  <input type="time" value={scheduleForm.lunchEnd} onChange={(e) => setScheduleForm((f) => ({ ...f, lunchEnd: e.target.value }))}
+                    className="w-full p-2 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 focus:border-lime-500 focus:outline-none text-sm" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-2 block">Dias de trabalho</label>
+                <div className="flex gap-1.5">
+                  {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((d, i) => (
+                    <button key={i}
+                      onClick={() => setScheduleForm((f) => ({ ...f, workDays: f.workDays.includes(i) ? f.workDays.filter((x) => x !== i) : [...f.workDays, i].sort() }))}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${scheduleForm.workDays.includes(i) ? "bg-lime-600 text-white" : "bg-gray-800 text-gray-500 hover:bg-gray-700"}`}
+                    >{d}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="bg-gray-800/50 rounded-xl p-3">
+                <p className="text-xs text-gray-400">
+                  Horas úteis/dia: <strong className="text-gray-200">{(timeDiffHours(scheduleForm.workStart, scheduleForm.workEnd) - timeDiffHours(scheduleForm.lunchStart, scheduleForm.lunchEnd)).toFixed(1)}h</strong>
+                </p>
+              </div>
+              <div className="flex justify-end gap-3">
+                <Button variant="secondary" onClick={() => setIsScheduleModalOpen(false)}>Cancelar</Button>
+                <Button onClick={handleSaveSchedule}>Salvar</Button>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* Modal: Adicionar Evento */}
+      <Modal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} title="Adicionar Evento" size="sm">
+        <div className="space-y-4">
+          <Input label="Título" value={eventForm.title} onChange={(v) => setEventForm((f) => ({ ...f, title: v }))} placeholder="Ex: Reunião de kickoff" />
+          <div>
+            <label className="text-sm text-gray-300 mb-2 block">Tipo</label>
+            <div className="flex gap-2">
+              {[{ id: "meeting", label: "Reunião" }, { id: "absence", label: "Ausência" }, { id: "vacation", label: "Férias" }].map((t) => (
+                <button key={t.id} onClick={() => setEventForm((f) => ({ ...f, type: t.id }))}
+                  className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${eventForm.type === t.id ? "bg-violet-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"}`}
+                >{t.label}</button>
+              ))}
+            </div>
+          </div>
+          <Input label="Data" type="date" value={eventForm.date} onChange={(v) => setEventForm((f) => ({ ...f, date: v }))} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Início</label>
+              <input type="time" value={eventForm.startTime} onChange={(e) => setEventForm((f) => ({ ...f, startTime: e.target.value }))}
+                className="w-full p-2 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 focus:border-lime-500 focus:outline-none text-sm" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Fim</label>
+              <input type="time" value={eventForm.endTime} onChange={(e) => setEventForm((f) => ({ ...f, endTime: e.target.value }))}
+                className="w-full p-2 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 focus:border-lime-500 focus:outline-none text-sm" />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={() => setIsEventModalOpen(false)}>Cancelar</Button>
+            <Button onClick={handleSaveEvent} disabled={!eventForm.title || !eventForm.date}>Adicionar</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+
 // Main App
 export default function HypefocoCRM() {
   const [user, setUser] = useState(null);
@@ -9695,6 +10216,7 @@ export default function HypefocoCRM() {
       case "comercial": return <ComercialView data={data} />;
       case "pipeline": return <PipelineView data={data} updateData={updateData} />;
       case "projects": return <ProjectsView data={data} updateData={updateData} />;
+      case "pautas": return <PautasView data={data} updateData={updateData} />;
       case "budgets": return <BudgetsView data={data} updateData={updateData} />;
       case "activities": return <ActivitiesView data={data} updateData={updateData} />;
       case "clients": return <ClientsView data={data} updateData={updateData} />;
