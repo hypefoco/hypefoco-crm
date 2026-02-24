@@ -8212,10 +8212,16 @@ const FinancialView = ({ data, updateData }) => {
     // Começa com o saldo inicial do ano
     let balance = financial.initialBalances?.[year] || 0;
     
-    // Soma os resultados dos meses anteriores DESTE ano
+    // Soma os resultados dos meses anteriores DESTE ano, respeitando overrides intermediários
     for (let m = 0; m < monthIndex; m++) {
       const key = getMonthKey(year, m);
       const prevMonthData = financial.months?.[key] || { entries: [], expenses: [] };
+
+      // Se o mês anterior tem saldo inicial manual, reseta o saldo para esse valor
+      if (prevMonthData.initialBalanceOverride !== undefined) {
+        balance = prevMonthData.initialBalanceOverride;
+      }
+
       const totalReceived = (prevMonthData.entries || []).reduce((acc, e) => acc + (e.received || 0), 0);
       const totalPaid = (prevMonthData.expenses || []).reduce((acc, e) => acc + (e.paid || 0), 0);
       balance += totalReceived - totalPaid;
@@ -8521,8 +8527,22 @@ const FinancialView = ({ data, updateData }) => {
     const yearGoal = financial.yearGoals?.[selectedYear] || 0;
     const initialYearBalance = financial.initialBalances?.[selectedYear] || 0;
     const currentMonth = new Date().getMonth();
-    const remainingMonths = selectedYear === new Date().getFullYear() ? (12 - currentMonth - 1) : 0;
+    const todayYear = new Date().getFullYear();
+    const remainingMonths = selectedYear === todayYear ? (12 - currentMonth - 1) : 0;
     const amountRemaining = yearGoal - yearStats.totalReceivedIncome;
+
+    // Saldo atual calculado corretamente:
+    // - Ano futuro: apenas o saldo inicial
+    // - Ano atual: saldo até o mês atual (respeitando overrides)
+    // - Ano passado: saldo final de dezembro (respeitando overrides)
+    let currentCompanyBalance;
+    if (selectedYear > todayYear) {
+      currentCompanyBalance = initialYearBalance;
+    } else if (selectedYear === todayYear) {
+      currentCompanyBalance = calculateMonthStats(selectedYear, currentMonth).currentBalance;
+    } else {
+      currentCompanyBalance = calculateMonthStats(selectedYear, 11).currentBalance;
+    }
     const monthlyNeeded = remainingMonths > 0 ? amountRemaining / remainingMonths : 0;
     
     // Dados para o gráfico de pizza de GASTOS
@@ -8572,16 +8592,16 @@ const FinancialView = ({ data, updateData }) => {
         </div>
 
         {/* Saldo Atual em Destaque */}
-        <Card className={`p-6 ${(initialYearBalance + yearStats.totalActualResult) >= 0 ? 'bg-gradient-to-r from-cyan-900/30 to-emerald-900/30 border-cyan-600' : 'bg-gradient-to-r from-red-900/30 to-orange-900/30 border-red-600'}`}>
+        <Card className={`p-6 ${currentCompanyBalance >= 0 ? 'bg-gradient-to-r from-cyan-900/30 to-emerald-900/30 border-cyan-600' : 'bg-gradient-to-r from-red-900/30 to-orange-900/30 border-red-600'}`}>
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
-              <div className={`p-4 rounded-2xl ${(initialYearBalance + yearStats.totalActualResult) >= 0 ? 'bg-cyan-500' : 'bg-red-500'}`}>
+              <div className={`p-4 rounded-2xl ${currentCompanyBalance >= 0 ? 'bg-cyan-500' : 'bg-red-500'}`}>
                 <Wallet size={28} className="text-white" />
               </div>
               <div>
                 <p className="text-sm text-gray-400">Saldo Atual da Empresa</p>
-                <p className={`text-4xl font-bold ${(initialYearBalance + yearStats.totalActualResult) >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>
-                  {formatCurrency(initialYearBalance + yearStats.totalActualResult)}
+                <p className={`text-4xl font-bold ${currentCompanyBalance >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>
+                  {formatCurrency(currentCompanyBalance)}
                 </p>
               </div>
             </div>
