@@ -10526,21 +10526,20 @@ export default function HypefocoCRM() {
 
   // Verificar sessão ao carregar
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
       const u = session?.user ?? null;
       setUser(u);
-      if (u) {
-        const info = await checkTeamMember(u.email);
-        setMemberInfo(info);
-      }
       setAuthLoading(false);
+      // Verifica membro de equipe em background (não bloqueia o carregamento)
+      if (u) {
+        checkTeamMember(u.email).then(info => setMemberInfo(info)).catch(() => {});
+      }
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       const u = session?.user ?? null;
       setUser(u);
       if (u) {
-        const info = await checkTeamMember(u.email);
-        setMemberInfo(info);
+        checkTeamMember(u.email).then(info => setMemberInfo(info)).catch(() => {});
       } else {
         setMemberInfo(null);
       }
