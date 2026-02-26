@@ -406,47 +406,13 @@ const usePersistedState = (key, defaultValue, user) => {
     
     try {
       console.log("💾 Salvando na nuvem...");
-      
-      // Primeiro tenta UPDATE (mais comum após o primeiro save)
-      const { error: updateError } = await supabase
+
+      const { error: upsertError } = await supabase
         .from('crm_data')
-        .update({ 
-          data: dataToSave,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', user.id);
+        .upsert({ user_id: user.id, data: dataToSave }, { onConflict: 'user_id' });
 
-      if (updateError) {
-        console.log("Update falhou, tentando insert...", updateError);
-        
-        // Se update falhar, tenta INSERT
-        const { error: insertError } = await supabase
-          .from('crm_data')
-          .insert({ 
-            user_id: user.id, 
-            data: dataToSave
-          });
+      if (upsertError) throw upsertError;
 
-        if (insertError) {
-          // Se insert também falhar com duplicata, tenta update de novo
-          if (insertError.code === '23505') {
-            const { error: retryError } = await supabase
-              .from('crm_data')
-              .update({ 
-                data: dataToSave,
-                updated_at: new Date().toISOString()
-              })
-              .eq('user_id', user.id);
-            
-            if (retryError) {
-              throw retryError;
-            }
-          } else {
-            throw insertError;
-          }
-        }
-      }
-      
       console.log("☁️ Salvo na nuvem!", new Date().toLocaleTimeString());
       setSaveStatus('saved');
       
