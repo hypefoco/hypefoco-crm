@@ -10603,6 +10603,7 @@ const PautasView = ({ data, updateData }) => {
   const [weekOffset, setWeekOffset] = useState(0);
   const [draggedItem, setDraggedItem] = useState(null);
   const [dragOverSlot, setDragOverSlot] = useState(null);
+  const [dragOverBacklog, setDragOverBacklog] = useState(false);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [selectedMemberId, setSelectedMemberId] = useState(null);
   const [scheduleForm, setScheduleForm] = useState({
@@ -10822,6 +10823,15 @@ const PautasView = ({ data, updateData }) => {
     updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), assignments: (prev.pautas?.assignments || []).filter((a) => a.id !== assignmentId) } }));
   };
 
+  const handleDropOnBacklog = (e) => {
+    e.preventDefault();
+    setDragOverBacklog(false);
+    if (draggedItem?.type === "assignment") {
+      handleDeleteAssignment(draggedItem.assignment.id);
+    }
+    setDraggedItem(null);
+  };
+
   // ── Schedule modal ────────────────────────────────────────────────────────
   const openScheduleModal = (member) => {
     setSelectedMemberId(member.id);
@@ -10922,13 +10932,25 @@ const PautasView = ({ data, updateData }) => {
       </div>
 
       {/* Backlog */}
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+      <div
+        className={`border rounded-2xl p-4 transition-all ${
+          dragOverBacklog && draggedItem?.type === "assignment"
+            ? "bg-amber-900/10 border-amber-500"
+            : "bg-gray-900 border-gray-800"
+        }`}
+        onDragOver={(e) => { e.preventDefault(); setDragOverBacklog(true); }}
+        onDragLeave={() => setDragOverBacklog(false)}
+        onDrop={handleDropOnBacklog}
+      >
         <div className="flex items-center gap-2 mb-3">
           <Package size={15} className="text-gray-400" />
           <h2 className="text-sm font-semibold text-gray-300">Backlog — Tarefas não atribuídas</h2>
           <span className="ml-auto text-xs text-gray-500 bg-gray-800 rounded-full px-2 py-0.5">{backlog.length}</span>
         </div>
-        {backlog.length === 0 ? (
+        {dragOverBacklog && draggedItem?.type === "assignment" && (
+          <p className="text-xs text-amber-400 text-center pb-2">Solte aqui para devolver ao backlog</p>
+        )}
+        {backlog.length === 0 && !(dragOverBacklog && draggedItem?.type === "assignment") ? (
           <p className="text-sm text-gray-600 text-center py-6">Todas as tarefas estão atribuídas ou não há projetos ativos.</p>
         ) : (
           <div className="flex gap-3 overflow-x-auto pb-2">
