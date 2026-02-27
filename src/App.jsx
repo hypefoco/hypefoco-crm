@@ -706,6 +706,7 @@ const Sidebar = ({ activeView, setActiveView, isCollapsed, setIsCollapsed, user,
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-sm text-gray-200 truncate">{user?.user_metadata?.name || user?.email?.split('@')[0]}</p>
                 <p className="text-xs text-gray-600 truncate">{user?.email}</p>
+                {memberRole && (() => { const r = ROLES.find(x => x.id === memberRole); return r ? <span className={`mt-0.5 inline-block text-xs px-2 py-0.5 rounded-full ${r.color}`}>{r.label}</span> : null; })()}
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs">
@@ -8452,12 +8453,19 @@ const SettingsView = ({ data, updateData, user }) => {
     setFormData(emptyForm);
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
     if (confirm("Excluir este membro da equipe?")) {
+      const member = teamMembers.find(m => m.id === id);
       updateData(prev => ({
         ...prev,
         teamMembers: (prev.teamMembers || []).filter(m => m.id !== id),
       }));
+      // Remove acesso na tabela studio_members também
+      if (member?.email) {
+        try {
+          await supabase.from("studio_members").delete().eq("member_email", member.email);
+        } catch {}
+      }
     }
   };
 
@@ -8605,17 +8613,18 @@ const SettingsView = ({ data, updateData, user }) => {
         <div className="space-y-3 text-sm text-gray-400">
           <div className="flex gap-3 items-start">
             <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">1</span>
-            <p>Cadastre o membro aqui em <strong className="text-gray-200">Equipe Geral</strong> com o e-mail que ele usará para entrar.</p>
+            <p>Cadastre o membro aqui em <strong className="text-gray-200">Equipe Geral</strong> com o e-mail e cargo corretos.</p>
           </div>
           <div className="flex gap-3 items-start">
             <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
-            <p>No painel do Supabase, vá em <strong className="text-gray-200">Authentication → Users</strong> e convide o e-mail do membro.</p>
+            <p>No painel do Supabase, vá em <strong className="text-gray-200">Authentication → Users</strong> e convide o e-mail do membro (ele receberá um link para criar a senha).</p>
           </div>
           <div className="flex gap-3 items-start">
             <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
-            <p>Execute o SQL abaixo no Supabase para criar a tabela de membros (apenas na primeira vez):</p>
+            <p>Execute o SQL abaixo no <strong className="text-gray-200">SQL Editor do Supabase</strong> para criar a tabela de controle de acesso (apenas na primeira vez):</p>
           </div>
-          <pre className="bg-gray-900 rounded-lg p-3 text-xs text-gray-300 overflow-x-auto border border-gray-700">{`CREATE TABLE IF NOT EXISTS studio_members (
+          <pre className="bg-gray-900 rounded-lg p-3 text-xs text-gray-300 overflow-x-auto border border-gray-700">{`-- Tabela de membros da equipe
+CREATE TABLE IF NOT EXISTS studio_members (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   member_email TEXT NOT NULL UNIQUE,
   owner_user_id TEXT NOT NULL,
@@ -8623,13 +8632,28 @@ const SettingsView = ({ data, updateData, user }) => {
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE studio_members ENABLE ROW LEVEL SECURITY;
+-- Membro pode ler seu próprio registro
 CREATE POLICY "member_read_own" ON studio_members FOR SELECT
   USING (member_email = (auth.jwt()->>'email'));
+-- Dono gerencia todos os membros do seu estúdio
 CREATE POLICY "owner_manage" ON studio_members FOR ALL
   USING (owner_user_id = (auth.uid())::text);`}</pre>
           <div className="flex gap-3 items-start">
-            <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">4</span>
-            <p>O membro faz login com a conta dele e enxerga os dados do estúdio com as abas permitidas pelo cargo.</p>
+            <span className="w-6 h-6 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">4</span>
+            <p><strong className="text-orange-300">ESSENCIAL — execute também este SQL</strong> para liberar o acesso dos membros aos dados do estúdio (sem isso os dados não aparecem):</p>
+          </div>
+          <pre className="bg-gray-900 rounded-lg p-3 text-xs text-gray-300 overflow-x-auto border border-orange-700">{`-- Permite que membros da equipe acessem os dados do estúdio
+CREATE POLICY "team_member_data_access" ON crm_data FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM studio_members
+      WHERE studio_members.member_email = (auth.jwt()->>'email')
+      AND studio_members.owner_user_id = crm_data.user_id
+    )
+  );`}</pre>
+          <div className="flex gap-3 items-start">
+            <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">5</span>
+            <p>Pronto! O membro faz login com a conta dele e enxerga os dados do estúdio apenas nas abas permitidas pelo cargo. Para alterar o cargo, edite o membro aqui e salve.</p>
           </div>
         </div>
       </Card>
@@ -11168,20 +11192,25 @@ export default function HypefocoCRM() {
 
   // Verificar sessão ao carregar
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // Aguarda verificação de membro ANTES de liberar o app (evita race condition)
+    const initAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
       const u = session?.user ?? null;
       setUser(u);
-      setAuthLoading(false);
-      // Verifica membro de equipe em background (não bloqueia o carregamento)
       if (u) {
-        checkTeamMember(u.email).then(info => setMemberInfo(info)).catch(() => {});
+        const info = await checkTeamMember(u.email).catch(() => null);
+        setMemberInfo(info);
       }
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthLoading(false);
+    };
+    initAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const u = session?.user ?? null;
       setUser(u);
       if (u) {
-        checkTeamMember(u.email).then(info => setMemberInfo(info)).catch(() => {});
+        const info = await checkTeamMember(u.email).catch(() => null);
+        setMemberInfo(info);
       } else {
         setMemberInfo(null);
       }
@@ -11194,6 +11223,16 @@ export default function HypefocoCRM() {
     setUser(null);
     setMemberInfo(null);
   };
+
+  // Redirecionar para primeira aba permitida quando o cargo é carregado
+  useEffect(() => {
+    if (memberInfo?.role) {
+      const allowed = ROLE_TABS[memberInfo.role] || [];
+      if (allowed.length > 0 && !allowed.includes(activeView)) {
+        setActiveView(allowed[0]);
+      }
+    }
+  }, [memberInfo?.role]);
 
   if (authLoading) {
     return (
