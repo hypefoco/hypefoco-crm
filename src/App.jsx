@@ -4444,6 +4444,8 @@ const ActivitiesView = ({ data, updateData, setActiveView }) => {
 const ProjectDetailPanel = ({ project, data, updateData, onClose }) => {
   const [tick, setTick] = useState(0);
   const [descValue, setDescValue] = useState(project.description || '');
+  const [nameValue, setNameValue] = useState(project.name || '');
+  const [showCronograma, setShowCronograma] = useState(false);
 
   // Task modal
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -4461,16 +4463,28 @@ const ProjectDetailPanel = ({ project, data, updateData, onClose }) => {
   const [editingPhase, setEditingPhase] = useState(null);
   const [phaseForm, setPhaseForm] = useState({ name: '', deadline: '', description: '' });
 
+  // Comments
+  const [commentText, setCommentText] = useState('');
+  const [commentAuthorId, setCommentAuthorId] = useState('');
+  const [editingCommentId, setEditingCommentId] = useState(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+
   const teamMembers = data.teamMembers || [];
   const allTasks = data.projects?.tasks || [];
   const tasks = allTasks.filter(t => t.projectId === project.id);
-  const client = (data.clients || []).find(c => c.id === project.clientId);
+  const clients = data.clients || [];
+  const columns = data.projects?.columns || [];
+  const client = clients.find(c => c.id === project.clientId || c.id === parseInt(project.clientId));
   const checklists = project.checklists || [];
   const schedulePhases = project.schedulePhases || [];
+  const comments = project.comments || [];
   const responsible = teamMembers.find(m => m.id === project.responsibleId || m.id === parseInt(project.responsibleId));
 
-  // Sync description when project prop changes (e.g. when switching projects)
-  useEffect(() => { setDescValue(project.description || ''); }, [project.id]);
+  // Sync when project changes
+  useEffect(() => {
+    setDescValue(project.description || '');
+    setNameValue(project.name || '');
+  }, [project.id]);
 
   // Real-time tick for tracking display
   useEffect(() => {
@@ -4501,6 +4515,11 @@ const ProjectDetailPanel = ({ project, data, updateData, onClose }) => {
     let base = task.trackedSeconds || 0;
     if (task.isTracking && task.trackingStartedAt) base += (Date.now() - task.trackingStartedAt) / 1000;
     return Math.floor(base);
+  };
+
+  const formatDateTime = (iso) => {
+    const d = new Date(iso);
+    return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
   };
 
   // ── Updater helpers ───────────────────────────────────────
@@ -4563,85 +4582,176 @@ const ProjectDetailPanel = ({ project, data, updateData, onClose }) => {
   const handleDeleteChecklistItem = (clId, itemId) => updateProjectCard(c => ({ ...c, checklists: (c.checklists || []).map(cl => cl.id === clId ? { ...cl, items: (cl.items || []).filter(item => item.id !== itemId) } : cl) }));
   const handleUpdateChecklistItem = (clId, itemId, updates) => updateProjectCard(c => ({ ...c, checklists: (c.checklists || []).map(cl => cl.id === clId ? { ...cl, items: (cl.items || []).map(item => item.id === itemId ? { ...item, ...updates } : item) } : cl) }));
 
+  // ── Comment CRUD ──────────────────────────────────────────
+  const handleAddComment = () => {
+    if (!commentText.trim() || !commentAuthorId) return;
+    updateProjectCard(c => ({
+      ...c,
+      comments: [...(c.comments || []), { id: Date.now(), authorId: commentAuthorId, text: commentText.trim(), createdAt: new Date().toISOString(), editedAt: null }]
+    }));
+    setCommentText('');
+  };
+
+  const handleSaveEditComment = (commentId) => {
+    if (!editingCommentText.trim()) return;
+    updateProjectCard(c => ({
+      ...c,
+      comments: (c.comments || []).map(cm => cm.id === commentId ? { ...cm, text: editingCommentText.trim(), editedAt: new Date().toISOString() } : cm)
+    }));
+    setEditingCommentId(null);
+    setEditingCommentText('');
+  };
+
+  const handleDeleteComment = (commentId) => {
+    if (!confirm('Excluir este comentário?')) return;
+    updateProjectCard(c => ({ ...c, comments: (c.comments || []).filter(cm => cm.id !== commentId) }));
+  };
+
+  const inputCls = "bg-gray-800/50 border border-gray-700/60 rounded-lg px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-lime-500 transition-colors";
+
   return (
-    <div className="fixed inset-0 z-50 flex">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
-      {/* Panel */}
-      <div className="w-[520px] flex-shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col shadow-2xl shadow-black/60 overflow-hidden">
+      {/* Modal */}
+      <div className="relative w-full max-w-5xl max-h-[88vh] flex flex-col bg-gray-900 rounded-2xl border border-gray-800 shadow-2xl overflow-hidden">
 
-        {/* ─── Header (sticky) ─── */}
-        <div className="flex-shrink-0 border-b border-gray-800 bg-gray-900">
-          {/* Title row */}
-          <div className="flex items-start gap-3 px-5 pt-4 pb-2">
-            <button onClick={onClose} className="mt-0.5 p-1.5 hover:bg-gray-800 rounded-lg text-gray-500 hover:text-gray-300 transition-colors flex-shrink-0">
+        {/* ─── Header ─── */}
+        <div className="flex-shrink-0 border-b border-gray-800 px-6 py-4">
+          {/* Row 1: close + name + cronograma button */}
+          <div className="flex items-center gap-3 mb-3">
+            <button onClick={onClose} className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-500 hover:text-gray-300 transition-colors flex-shrink-0">
               <X size={16} />
             </button>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-base font-bold text-gray-100 leading-tight">{project.name}</h2>
-              {client && <p className="text-xs text-gray-500 mt-0.5">{client.name}{client.company ? ` · ${client.company}` : ''}</p>}
-            </div>
-            {responsible && (
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {responsible.photo ? (
-                  <img src={responsible.photo} alt={responsible.name} className="w-7 h-7 rounded-full object-cover border border-lime-500/60" title={responsible.name} />
-                ) : (
-                  <div className="w-7 h-7 rounded-full bg-lime-500/20 border border-lime-500/40 flex items-center justify-center" title={responsible.name}>
-                    <span className="text-lime-400 text-xs font-bold">{responsible.name?.[0]}</span>
-                  </div>
-                )}
-              </div>
-            )}
+            <input
+              value={nameValue}
+              onChange={e => setNameValue(e.target.value)}
+              onBlur={() => nameValue.trim() && nameValue !== project.name && updateProjectCard(c => ({ ...c, name: nameValue.trim() }))}
+              className="flex-1 min-w-0 bg-transparent text-base font-bold text-gray-100 focus:outline-none border-b border-transparent focus:border-lime-500 transition-colors pb-0.5"
+            />
+            <button
+              onClick={() => setShowCronograma(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex-shrink-0 ${
+                showCronograma
+                  ? 'bg-lime-500/20 border border-lime-500/40 text-lime-400'
+                  : 'bg-gray-800 border border-gray-700/60 text-gray-400 hover:text-gray-200 hover:border-gray-600'
+              }`}
+            >
+              <CalendarRange size={12} /> Cronograma
+            </button>
           </div>
 
-          {/* Status bar: current phase deadline */}
-          <div className="flex items-center gap-2 px-5 pb-3">
+          {/* Row 2: editable meta fields */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pl-9">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-600">Responsável:</span>
+              <select
+                value={project.responsibleId?.toString() || ''}
+                onChange={e => updateProjectCard(c => ({ ...c, responsibleId: e.target.value ? (parseInt(e.target.value) || e.target.value) : '' }))}
+                className={inputCls}
+              >
+                <option value="">Nenhum</option>
+                {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+              {responsible && (responsible.photo
+                ? <img src={responsible.photo} alt="" className="w-5 h-5 rounded-full object-cover border border-lime-500/40" />
+                : <div className="w-5 h-5 rounded-full bg-lime-500/20 border border-lime-500/40 flex items-center justify-center"><span className="text-lime-400 text-[10px] font-bold">{responsible.name?.[0]}</span></div>
+              )}
+            </div>
+            <span className="text-gray-700 text-xs">·</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-600">Cliente:</span>
+              <select
+                value={project.clientId?.toString() || ''}
+                onChange={e => updateProjectCard(c => ({ ...c, clientId: e.target.value ? (parseInt(e.target.value) || e.target.value) : '' }))}
+                className={inputCls}
+              >
+                <option value="">Nenhum</option>
+                {clients.map(cl => <option key={cl.id} value={cl.id}>{cl.name}{cl.company ? ` · ${cl.company}` : ''}</option>)}
+              </select>
+            </div>
+            <span className="text-gray-700 text-xs">·</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-600">Coluna:</span>
+              <select
+                value={project.columnId?.toString() || ''}
+                onChange={e => updateProjectCard(c => ({ ...c, columnId: e.target.value }))}
+                className={inputCls}
+              >
+                {columns.map(col => <option key={col.id} value={col.id}>{col.name}</option>)}
+              </select>
+            </div>
+            <span className="text-gray-700 text-xs">·</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-600">Prazo:</span>
+              <input
+                type="date"
+                value={project.deadline || ''}
+                onChange={e => updateProjectCard(c => ({ ...c, deadline: e.target.value }))}
+                className={inputCls}
+              />
+            </div>
+            <span className="text-gray-700 text-xs">·</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-600">Horas:</span>
+              <input
+                type="number"
+                defaultValue={project.estimatedHours || ''}
+                onBlur={e => updateProjectCard(c => ({ ...c, estimatedHours: parseFloat(e.target.value) || 0 }))}
+                placeholder="0"
+                className={`${inputCls} w-16`}
+              />
+            </div>
+          </div>
+
+          {/* Row 3: deadline badge + task count */}
+          <div className="flex items-center gap-2 pl-9 mt-2">
             {effectiveDeadline ? (
-              <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${
-                isOverdue
-                  ? 'bg-red-900/30 border border-red-700/50 text-red-400'
-                  : daysUntil !== null && daysUntil <= 7
-                    ? 'bg-amber-900/30 border border-amber-700/40 text-amber-400'
-                    : 'bg-gray-800 border border-gray-700/60 text-gray-400'
+              <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs font-medium ${
+                isOverdue ? 'bg-red-900/30 border border-red-700/50 text-red-400'
+                  : daysUntil !== null && daysUntil <= 7 ? 'bg-amber-900/30 border border-amber-700/40 text-amber-400'
+                  : 'bg-gray-800/60 border border-gray-700/50 text-gray-500'
               }`}>
-                <Calendar size={11} />
-                {currentPhase && <span className="text-gray-500 mr-0.5 max-w-28 truncate">{currentPhase.name} ·</span>}
+                <Calendar size={10} />
+                {currentPhase && <span className="text-gray-600 mr-0.5 max-w-[100px] truncate">{currentPhase.name} ·</span>}
                 {new Date(effectiveDeadline + 'T12:00').toLocaleDateString('pt-BR')}
-                {isOverdue && <span className="ml-1 font-bold text-red-300">· Projeto Atrasado</span>}
-                {!isOverdue && daysUntil !== null && daysUntil <= 7 && daysUntil > 0 && <span className="ml-1 text-amber-300">· {daysUntil}d restantes</span>}
-                {!isOverdue && daysUntil === 0 && <span className="ml-1 font-bold text-amber-300">· Entrega hoje!</span>}
+                {isOverdue && <span className="ml-1 font-bold text-red-300">· Atrasado</span>}
+                {!isOverdue && daysUntil !== null && daysUntil <= 7 && daysUntil > 0 && <span className="ml-1 text-amber-300">· {daysUntil}d</span>}
+                {!isOverdue && daysUntil === 0 && <span className="ml-1 font-bold text-amber-300">· Hoje!</span>}
               </div>
-            ) : (
-              <span className="text-xs text-gray-700 italic">Sem prazo definido</span>
-            )}
+            ) : null}
             {tasks.length > 0 && (
-              <span className="text-xs text-gray-600 flex items-center gap-1 ml-1">
-                <CheckSquare size={11} />
+              <span className="text-xs text-gray-600 flex items-center gap-1">
+                <CheckSquare size={10} />
                 {tasks.filter(t => t.completed).length}/{tasks.length} tarefas
               </span>
             )}
           </div>
         </div>
 
-        {/* ─── Scrollable body ─── */}
-        <div className="flex-1 overflow-y-auto">
+        {/* ─── Body: 2 columns ─── */}
+        <div className="flex flex-1 min-h-0">
 
-          {/* Description */}
-          <div className="px-5 py-4 border-b border-gray-800/60">
-            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">Descrição</p>
-            <textarea
-              value={descValue}
-              onChange={e => setDescValue(e.target.value)}
-              onBlur={handleDescBlur}
-              placeholder="Adicione uma descrição ao projeto..."
-              className="w-full bg-transparent text-sm text-gray-300 placeholder-gray-700 resize-none focus:outline-none leading-relaxed min-h-[56px]"
-              rows={3}
-            />
-          </div>
+          {/* Left column */}
+          <div className="flex-1 overflow-y-auto min-w-0">
+            {!showCronograma ? (
+              <>
+                {/* Description */}
+                <div className="px-6 py-4 border-b border-gray-800/60">
+                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">Descrição</p>
+                  <textarea
+                    value={descValue}
+                    onChange={e => setDescValue(e.target.value)}
+                    onBlur={handleDescBlur}
+                    placeholder="Adicione uma descrição ao projeto..."
+                    className="w-full bg-transparent text-sm text-gray-300 placeholder-gray-700 resize-none focus:outline-none leading-relaxed min-h-[56px]"
+                    rows={3}
+                  />
+                </div>
 
-          {/* ─── Tarefas ─── */}
-          <div className="px-5 py-4 border-b border-gray-800/60">
+                {/* ─── Tarefas ─── */}
+                <div className="px-6 py-4 border-b border-gray-800/60">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <CheckSquare size={13} className="text-gray-500" />
@@ -4703,157 +4813,237 @@ const ProjectDetailPanel = ({ project, data, updateData, onClose }) => {
             )}
           </div>
 
-          {/* ─── Checklists ─── */}
-          <div className="px-5 py-4 border-b border-gray-800/60">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <ListChecks size={13} className="text-gray-500" />
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Checklists</span>
-                {checklists.length > 0 && <span className="text-xs text-gray-600">({checklists.length})</span>}
-              </div>
-            </div>
-
-            {/* Add checklist input */}
-            <div className="flex gap-2 mb-3">
-              <input
-                value={newChecklistName}
-                onChange={e => setNewChecklistName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleAddProjectChecklist()}
-                placeholder="Nome da nova checklist..."
-                className="flex-1 px-3 py-1.5 bg-gray-800/70 border border-gray-700/60 rounded-lg text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-lime-500"
-              />
-              <button onClick={handleAddProjectChecklist} disabled={!newChecklistName.trim()} className="px-3 py-1.5 bg-lime-500/20 hover:bg-lime-500/30 text-lime-400 rounded-lg text-sm transition-colors disabled:opacity-40 flex items-center gap-1 flex-shrink-0">
-                <Plus size={13} /> Criar
-              </button>
-            </div>
-
-            {checklists.length === 0 ? (
-              <p className="text-xs text-gray-700 text-center py-2">Nenhuma checklist criada.</p>
-            ) : (
-              <div className="space-y-3">
-                {checklists.map(cl => {
-                  const completedCount = (cl.items || []).filter(i => i.checked).length;
-                  const totalCount = (cl.items || []).length;
-                  const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
-                  return (
-                    <div key={cl.id} className="bg-gray-800/40 rounded-xl border border-gray-700/50 overflow-hidden">
-                      <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-700/40">
-                        {editingChecklistName === cl.id ? (
-                          <input value={checklistRenameValue} onChange={e => setChecklistRenameValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleRenameProjectChecklist(cl.id); if (e.key === 'Escape') setEditingChecklistName(null); }} onBlur={() => handleRenameProjectChecklist(cl.id)} autoFocus className="flex-1 px-2 py-0.5 bg-gray-800 border border-lime-500 rounded text-sm text-gray-200 focus:outline-none" />
-                        ) : (
-                          <span className="flex-1 text-sm font-semibold text-gray-200">{cl.name}</span>
-                        )}
-                        <span className="text-xs text-gray-600 font-mono">{completedCount}/{totalCount}</span>
-                        <button onClick={() => { setEditingChecklistName(cl.id); setChecklistRenameValue(cl.name); }} className="p-1 hover:bg-gray-700 rounded"><Edit2 size={11} className="text-gray-500" /></button>
-                        <button onClick={() => handleDeleteProjectChecklist(cl.id)} className="p-1 hover:bg-red-900/30 rounded"><Trash2 size={11} className="text-red-500" /></button>
-                      </div>
-                      {totalCount > 0 && (
-                        <div className="px-3 py-1.5 border-b border-gray-700/30">
-                          <div className="h-1 bg-gray-700 rounded-full overflow-hidden">
-                            <div className="h-full bg-lime-500 rounded-full transition-all" style={{ width: `${progress}%` }} />
-                          </div>
-                        </div>
-                      )}
-                      <div className="px-3 pb-2">
-                        {(cl.items || []).map(item => {
-                          const itemMember = getMember(item.responsibleId);
-                          return (
-                            <div key={item.id} className="group/item flex items-center gap-2 py-1.5 hover:bg-gray-700/30 rounded px-1 -mx-1 transition-colors">
-                              <button onClick={() => handleToggleChecklistItem(cl.id, item.id)} className="flex-shrink-0">
-                                <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${item.checked ? 'bg-lime-500 border-lime-500' : 'border-gray-600 hover:border-lime-500'}`}>
-                                  {item.checked && <Check size={9} className="text-gray-900" />}
-                                </div>
-                              </button>
-                              <span className={`flex-1 text-sm min-w-0 ${item.checked ? 'line-through text-gray-600' : 'text-gray-300'}`}>{item.text}</span>
-                              {/* Meta shown always when set */}
-                              {(itemMember || item.deadline) && (
-                                <div className="flex items-center gap-1.5 text-xs text-gray-600 group-hover/item:hidden">
-                                  {itemMember && <span>{itemMember.name?.split(' ')[0]}</span>}
-                                  {item.deadline && <span>{new Date(item.deadline + 'T12:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>}
-                                </div>
+                {/* ─── Checklists ─── */}
+                <div className="px-6 py-4 pb-8">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <ListChecks size={13} className="text-gray-500" />
+                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Checklists</span>
+                      {checklists.length > 0 && <span className="text-xs text-gray-600">({checklists.length})</span>}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mb-3">
+                    <input
+                      value={newChecklistName}
+                      onChange={e => setNewChecklistName(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleAddProjectChecklist()}
+                      placeholder="Nome da nova checklist..."
+                      className="flex-1 px-3 py-1.5 bg-gray-800/70 border border-gray-700/60 rounded-lg text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-lime-500"
+                    />
+                    <button onClick={handleAddProjectChecklist} disabled={!newChecklistName.trim()} className="px-3 py-1.5 bg-lime-500/20 hover:bg-lime-500/30 text-lime-400 rounded-lg text-sm transition-colors disabled:opacity-40 flex items-center gap-1 flex-shrink-0">
+                      <Plus size={13} /> Criar
+                    </button>
+                  </div>
+                  {checklists.length === 0 ? (
+                    <p className="text-xs text-gray-700 text-center py-2">Nenhuma checklist criada.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {checklists.map(cl => {
+                        const completedCount = (cl.items || []).filter(i => i.checked).length;
+                        const totalCount = (cl.items || []).length;
+                        const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
+                        return (
+                          <div key={cl.id} className="bg-gray-800/40 rounded-xl border border-gray-700/50 overflow-hidden">
+                            <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-700/40">
+                              {editingChecklistName === cl.id ? (
+                                <input value={checklistRenameValue} onChange={e => setChecklistRenameValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleRenameProjectChecklist(cl.id); if (e.key === 'Escape') setEditingChecklistName(null); }} onBlur={() => handleRenameProjectChecklist(cl.id)} autoFocus className="flex-1 px-2 py-0.5 bg-gray-800 border border-lime-500 rounded text-sm text-gray-200 focus:outline-none" />
+                              ) : (
+                                <span className="flex-1 text-sm font-semibold text-gray-200">{cl.name}</span>
                               )}
-                              {/* Controls on hover */}
-                              <div className="hidden group-hover/item:flex items-center gap-1.5">
-                                <select value={item.responsibleId || ''} onChange={e => handleUpdateChecklistItem(cl.id, item.id, { responsibleId: e.target.value ? (parseInt(e.target.value) || e.target.value) : '' })} className="text-xs bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-500 focus:outline-none focus:border-lime-500" title="Responsável">
-                                  <option value="">Resp.</option>
-                                  {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                                </select>
-                                <input type="date" value={item.deadline || ''} onChange={e => handleUpdateChecklistItem(cl.id, item.id, { deadline: e.target.value })} className="text-xs bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-500 focus:outline-none focus:border-lime-500" />
-                                <button onClick={() => handleDeleteChecklistItem(cl.id, item.id)} className="p-0.5 hover:bg-red-900/30 rounded"><X size={10} className="text-gray-600 hover:text-red-400" /></button>
+                              <span className="text-xs text-gray-600 font-mono">{completedCount}/{totalCount}</span>
+                              <button onClick={() => { setEditingChecklistName(cl.id); setChecklistRenameValue(cl.name); }} className="p-1 hover:bg-gray-700 rounded"><Edit2 size={11} className="text-gray-500" /></button>
+                              <button onClick={() => handleDeleteProjectChecklist(cl.id)} className="p-1 hover:bg-red-900/30 rounded"><Trash2 size={11} className="text-red-500" /></button>
+                            </div>
+                            {totalCount > 0 && (
+                              <div className="px-3 py-1.5 border-b border-gray-700/30">
+                                <div className="h-1 bg-gray-700 rounded-full overflow-hidden">
+                                  <div className="h-full bg-lime-500 rounded-full transition-all" style={{ width: `${progress}%` }} />
+                                </div>
+                              </div>
+                            )}
+                            <div className="px-3 pb-2">
+                              {(cl.items || []).map(item => {
+                                const itemMember = getMember(item.responsibleId);
+                                return (
+                                  <div key={item.id} className="group/item flex items-center gap-2 py-1.5 hover:bg-gray-700/30 rounded px-1 -mx-1 transition-colors">
+                                    <button onClick={() => handleToggleChecklistItem(cl.id, item.id)} className="flex-shrink-0">
+                                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${item.checked ? 'bg-lime-500 border-lime-500' : 'border-gray-600 hover:border-lime-500'}`}>
+                                        {item.checked && <Check size={9} className="text-gray-900" />}
+                                      </div>
+                                    </button>
+                                    <span className={`flex-1 text-sm min-w-0 ${item.checked ? 'line-through text-gray-600' : 'text-gray-300'}`}>{item.text}</span>
+                                    {(itemMember || item.deadline) && (
+                                      <div className="flex items-center gap-1.5 text-xs text-gray-600 group-hover/item:hidden">
+                                        {itemMember && <span>{itemMember.name?.split(' ')[0]}</span>}
+                                        {item.deadline && <span>{new Date(item.deadline + 'T12:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>}
+                                      </div>
+                                    )}
+                                    <div className="hidden group-hover/item:flex items-center gap-1.5">
+                                      <select value={item.responsibleId || ''} onChange={e => handleUpdateChecklistItem(cl.id, item.id, { responsibleId: e.target.value ? (parseInt(e.target.value) || e.target.value) : '' })} className="text-xs bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-500 focus:outline-none focus:border-lime-500" title="Responsável">
+                                        <option value="">Resp.</option>
+                                        {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                      </select>
+                                      <input type="date" value={item.deadline || ''} onChange={e => handleUpdateChecklistItem(cl.id, item.id, { deadline: e.target.value })} className="text-xs bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-500 focus:outline-none focus:border-lime-500" />
+                                      <button onClick={() => handleDeleteChecklistItem(cl.id, item.id)} className="p-0.5 hover:bg-red-900/30 rounded"><X size={10} className="text-gray-600 hover:text-red-400" /></button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              <div className="flex gap-2 mt-2 pt-2 border-t border-gray-700/30">
+                                <input
+                                  value={checklistInputs[cl.id] || ''}
+                                  onChange={e => setChecklistInputs(prev => ({ ...prev, [cl.id]: e.target.value }))}
+                                  onKeyDown={e => { if (e.key === 'Enter' && (checklistInputs[cl.id] || '').trim()) { handleAddChecklistItem(cl.id, checklistInputs[cl.id]); setChecklistInputs(prev => ({ ...prev, [cl.id]: '' })); } }}
+                                  placeholder="Adicionar item..."
+                                  className="flex-1 text-sm px-2 py-1 bg-transparent border-b border-gray-700/50 text-gray-300 placeholder-gray-700 focus:outline-none focus:border-lime-500"
+                                />
+                                <button onClick={() => { if ((checklistInputs[cl.id] || '').trim()) { handleAddChecklistItem(cl.id, checklistInputs[cl.id]); setChecklistInputs(prev => ({ ...prev, [cl.id]: '' })); } }} className="px-2 py-1 text-lime-500 hover:bg-lime-500/10 rounded transition-colors"><Plus size={13} /></button>
                               </div>
                             </div>
-                          );
-                        })}
-                        <div className="flex gap-2 mt-2 pt-2 border-t border-gray-700/30">
-                          <input
-                            value={checklistInputs[cl.id] || ''}
-                            onChange={e => setChecklistInputs(prev => ({ ...prev, [cl.id]: e.target.value }))}
-                            onKeyDown={e => { if (e.key === 'Enter' && (checklistInputs[cl.id] || '').trim()) { handleAddChecklistItem(cl.id, checklistInputs[cl.id]); setChecklistInputs(prev => ({ ...prev, [cl.id]: '' })); } }}
-                            placeholder="Adicionar item..."
-                            className="flex-1 text-sm px-2 py-1 bg-transparent border-b border-gray-700/50 text-gray-300 placeholder-gray-700 focus:outline-none focus:border-lime-500"
-                          />
-                          <button onClick={() => { if ((checklistInputs[cl.id] || '').trim()) { handleAddChecklistItem(cl.id, checklistInputs[cl.id]); setChecklistInputs(prev => ({ ...prev, [cl.id]: '' })); } }} className="px-2 py-1 text-lime-500 hover:bg-lime-500/10 rounded transition-colors"><Plus size={13} /></button>
-                        </div>
-                      </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
+                  )}
+                </div>
+              </>
+            ) : (
+              /* ─── Cronograma view ─── */
+              <div className="px-6 py-4 pb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <CalendarRange size={13} className="text-gray-500" />
+                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cronograma</span>
+                  </div>
+                  <button onClick={() => { setEditingPhase(null); setPhaseForm({ name: '', deadline: '', description: '' }); setIsPhaseModalOpen(true); }} className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 px-2 py-1 rounded-lg hover:bg-gray-800 transition-colors">
+                    <Plus size={12} /> Fase
+                  </button>
+                </div>
+                {sortedPhases.length === 0 ? (
+                  <p className="text-xs text-gray-700 text-center py-3">Sem fases cadastradas.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {sortedPhases.map(phase => {
+                      const isCurrent = phase.id === currentPhase?.id;
+                      const isPhaseOverdue = phase.deadline && !phase.completed && new Date(phase.deadline + 'T23:59') < today;
+                      return (
+                        <div key={phase.id} className={`group flex items-center gap-3 p-2.5 rounded-xl transition-all ${isCurrent ? 'bg-amber-900/15 border border-amber-700/40' : phase.completed ? 'opacity-50 bg-gray-800/20' : 'bg-gray-800/40 hover:bg-gray-800/70'}`}>
+                          <button onClick={() => handleTogglePhaseComplete(phase.id)} className="flex-shrink-0">
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${phase.completed ? 'bg-emerald-500 border-emerald-500' : isCurrent ? 'border-amber-400' : 'border-gray-600 hover:border-lime-500'}`}>
+                              {phase.completed && <Check size={10} className="text-white" />}
+                              {isCurrent && !phase.completed && <div className="w-2 h-2 rounded-full bg-amber-400" />}
+                            </div>
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-sm ${phase.completed ? 'line-through text-gray-600' : isCurrent ? 'text-amber-300 font-medium' : 'text-gray-300'}`}>{phase.name}</span>
+                              {isCurrent && <span className="text-xs text-amber-600 font-medium flex-shrink-0">← atual</span>}
+                            </div>
+                            {phase.description && <p className="text-xs text-gray-600 truncate mt-0.5">{phase.description}</p>}
+                          </div>
+                          {phase.deadline && (
+                            <span className={`text-xs flex-shrink-0 font-medium ${isPhaseOverdue ? 'text-red-400' : phase.completed ? 'text-gray-600' : 'text-gray-500'}`}>
+                              {new Date(phase.deadline + 'T12:00').toLocaleDateString('pt-BR')}
+                            </span>
+                          )}
+                          <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => { setEditingPhase(phase); setPhaseForm({ name: phase.name, deadline: phase.deadline || '', description: phase.description || '' }); setIsPhaseModalOpen(true); }} className="p-1 hover:bg-gray-700 rounded"><Edit2 size={11} className="text-gray-500" /></button>
+                            <button onClick={() => handleDeletePhase(phase.id)} className="p-1 hover:bg-red-900/30 rounded"><Trash2 size={11} className="text-red-500" /></button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
 
-          {/* ─── Cronograma ─── */}
-          <div className="px-5 py-4 pb-8">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <CalendarRange size={13} className="text-gray-500" />
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cronograma</span>
-              </div>
-              <button onClick={() => { setEditingPhase(null); setPhaseForm({ name: '', deadline: '', description: '' }); setIsPhaseModalOpen(true); }} className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 px-2 py-1 rounded-lg hover:bg-gray-800 transition-colors">
-                <Plus size={12} /> Fase
-              </button>
+          {/* ─── Right column: Comments ─── */}
+          <div className="w-72 flex-shrink-0 flex flex-col border-l border-gray-800">
+            <div className="flex-shrink-0 px-4 py-3 border-b border-gray-800">
+              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                <MessageSquare size={12} /> Comentários
+                {comments.length > 0 && <span className="text-gray-600 font-normal ml-1">({comments.length})</span>}
+              </h3>
             </div>
-
-            {sortedPhases.length === 0 ? (
-              <p className="text-xs text-gray-700 text-center py-3">Sem fases cadastradas.</p>
-            ) : (
-              <div className="space-y-1.5">
-                {sortedPhases.map(phase => {
-                  const isCurrent = phase.id === currentPhase?.id;
-                  const isPhaseOverdue = phase.deadline && !phase.completed && new Date(phase.deadline + 'T23:59') < today;
-                  return (
-                    <div key={phase.id} className={`group flex items-center gap-3 p-2.5 rounded-xl transition-all ${
-                      isCurrent ? 'bg-amber-900/15 border border-amber-700/40' : phase.completed ? 'opacity-50 bg-gray-800/20' : 'bg-gray-800/40 hover:bg-gray-800/70'
-                    }`}>
-                      <button onClick={() => handleTogglePhaseComplete(phase.id)} className="flex-shrink-0">
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
-                          phase.completed ? 'bg-emerald-500 border-emerald-500' : isCurrent ? 'border-amber-400' : 'border-gray-600 hover:border-lime-500'
-                        }`}>
-                          {phase.completed && <Check size={10} className="text-white" />}
-                          {isCurrent && !phase.completed && <div className="w-2 h-2 rounded-full bg-amber-400" />}
-                        </div>
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-sm ${phase.completed ? 'line-through text-gray-600' : isCurrent ? 'text-amber-300 font-medium' : 'text-gray-300'}`}>{phase.name}</span>
-                          {isCurrent && <span className="text-xs text-amber-600 font-medium flex-shrink-0">← atual</span>}
-                        </div>
-                        {phase.description && <p className="text-xs text-gray-600 truncate mt-0.5">{phase.description}</p>}
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+              {[...comments].reverse().map(cm => {
+                const author = getMember(cm.authorId);
+                return (
+                  <div key={cm.id} className="group">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-shrink-0 mt-0.5">
+                        {author?.photo
+                          ? <img src={author.photo} alt="" className="w-6 h-6 rounded-full object-cover" />
+                          : <div className="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center"><span className="text-gray-400 text-[10px] font-bold">{author?.name?.[0] || '?'}</span></div>
+                        }
                       </div>
-                      {phase.deadline && (
-                        <span className={`text-xs flex-shrink-0 font-medium ${isPhaseOverdue ? 'text-red-400' : phase.completed ? 'text-gray-600' : 'text-gray-500'}`}>
-                          {new Date(phase.deadline + 'T12:00').toLocaleDateString('pt-BR')}
-                        </span>
-                      )}
-                      <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => { setEditingPhase(phase); setPhaseForm({ name: phase.name, deadline: phase.deadline || '', description: phase.description || '' }); setIsPhaseModalOpen(true); }} className="p-1 hover:bg-gray-700 rounded"><Edit2 size={11} className="text-gray-500" /></button>
-                        <button onClick={() => handleDeletePhase(phase.id)} className="p-1 hover:bg-red-900/30 rounded"><Trash2 size={11} className="text-red-500" /></button>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-baseline gap-1.5 mb-0.5">
+                          <span className="text-xs font-semibold text-gray-300">{author?.name || 'Desconhecido'}</span>
+                          <span className="text-[10px] text-gray-600">{formatDateTime(cm.createdAt)}</span>
+                          {cm.editedAt && <span className="text-[10px] text-gray-700 italic">editado</span>}
+                        </div>
+                        {editingCommentId === cm.id ? (
+                          <div className="space-y-1.5">
+                            <textarea
+                              value={editingCommentText}
+                              onChange={e => setEditingCommentText(e.target.value)}
+                              autoFocus
+                              rows={2}
+                              className="w-full text-xs px-2 py-1.5 bg-gray-800 border border-lime-500 rounded-lg text-gray-300 resize-none focus:outline-none"
+                            />
+                            <div className="flex gap-2">
+                              <button onClick={() => handleSaveEditComment(cm.id)} className="text-[10px] text-lime-400 hover:text-lime-300">salvar</button>
+                              <button onClick={() => setEditingCommentId(null)} className="text-[10px] text-gray-600 hover:text-gray-400">cancelar</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-400 leading-relaxed break-words">{cm.text}</p>
+                        )}
+                        {editingCommentId !== cm.id && (
+                          <div className="flex gap-2 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => { setEditingCommentId(cm.id); setEditingCommentText(cm.text); }} className="text-[10px] text-gray-600 hover:text-gray-300">editar</button>
+                            <button onClick={() => handleDeleteComment(cm.id)} className="text-[10px] text-gray-600 hover:text-red-400">excluir</button>
+                          </div>
+                        )}
                       </div>
                     </div>
-                  );
-                })}
+                  </div>
+                );
+              })}
+              {comments.length === 0 && (
+                <p className="text-xs text-gray-700 text-center py-6">Nenhum comentário ainda.</p>
+              )}
+            </div>
+            <div className="flex-shrink-0 px-4 py-3 border-t border-gray-800 space-y-2">
+              <select
+                value={commentAuthorId}
+                onChange={e => setCommentAuthorId(e.target.value)}
+                className="w-full text-xs px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-400 focus:outline-none focus:border-lime-500"
+              >
+                <option value="">De: selecionar membro</option>
+                {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+              <div className="flex gap-2">
+                <textarea
+                  value={commentText}
+                  onChange={e => setCommentText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddComment(); } }}
+                  placeholder="Escrever comentário..."
+                  rows={2}
+                  className="flex-1 text-xs px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-300 resize-none focus:outline-none focus:border-lime-500 placeholder-gray-600"
+                />
+                <button
+                  onClick={handleAddComment}
+                  disabled={!commentText.trim() || !commentAuthorId}
+                  className="px-2.5 py-1.5 bg-lime-500/20 hover:bg-lime-500/30 text-lime-400 rounded-lg text-xs disabled:opacity-40 flex-shrink-0 self-end"
+                >
+                  Comentar
+                </button>
               </div>
-            )}
+            </div>
           </div>
         </div>
 
@@ -4904,13 +5094,10 @@ const ProjectDetailPanel = ({ project, data, updateData, onClose }) => {
 const ProjectsView = ({ data, updateData }) => {
   const [draggedCard, setDraggedCard] = useState(null);
   const [dragOverColumn, setDragOverColumn] = useState(null);
-  const [isCardModalOpen, setIsCardModalOpen] = useState(false);
+  const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
   const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
-  const [editingCard, setEditingCard] = useState(null);
+  const [newProjectForm, setNewProjectForm] = useState({ name: "", columnId: "" });
   const [editingColumn, setEditingColumn] = useState(null);
-  const [cardForm, setCardForm] = useState({
-    name: "", description: "", clientId: "", responsibleId: "", columnId: "", deadline: "", estimatedHours: 0
-  });
   const [columnForm, setColumnForm] = useState({ name: "", color: "#8b5cf6", icon: "clipboard" });
   const [selectedProject, setSelectedProject] = useState(null);
   const [hoveredCardId, setHoveredCardId] = useState(null);
@@ -4979,43 +5166,22 @@ const ProjectsView = ({ data, updateData }) => {
 
   const getProjectTasks = (cardId) => allTasks.filter(t => t.projectId === cardId);
 
-  // CRUD de Cards
-  const handleSaveCard = () => {
-    if (!cardForm.name || !cardForm.columnId) return;
-
-    if (editingCard) {
-      const updatedCards = cards.map(c =>
-        c.id === editingCard.id ? { ...c, ...cardForm, id: c.id } : c
-      );
-      updateData(prev => ({
-        ...prev,
-        projects: { ...prev.projects, cards: updatedCards }
-      }));
-    } else {
-      const newCard = { ...cardForm, id: Date.now(), createdAt: new Date().toISOString(), checklists: [], schedulePhases: [] };
-      updateData(prev => ({
-        ...prev,
-        projects: { ...prev.projects, cards: [...(prev.projects?.cards || []), newCard] }
-      }));
-    }
-
-    setIsCardModalOpen(false);
-    setEditingCard(null);
-    setCardForm({ name: "", description: "", clientId: "", responsibleId: "", columnId: "", deadline: "", estimatedHours: 0 });
-  };
-
-  const handleEditCard = (card) => {
-    setEditingCard(card);
-    setCardForm({
-      name: card.name || "",
-      description: card.description || "",
-      clientId: card.clientId || "",
-      responsibleId: card.responsibleId || "",
-      columnId: card.columnId || "",
-      deadline: card.deadline || "",
-      estimatedHours: card.estimatedHours || 0,
-    });
-    setIsCardModalOpen(true);
+  // Criação de novo projeto
+  const handleCreateProject = () => {
+    if (!newProjectForm.name || !newProjectForm.columnId) return;
+    const newCard = {
+      id: Date.now(), createdAt: new Date().toISOString(),
+      name: newProjectForm.name, columnId: newProjectForm.columnId,
+      description: '', clientId: '', responsibleId: '',
+      deadline: '', estimatedHours: 0,
+      checklists: [], schedulePhases: [],
+    };
+    updateData(prev => ({
+      ...prev,
+      projects: { ...prev.projects, cards: [...(prev.projects?.cards || []), newCard] }
+    }));
+    setIsNewProjectModalOpen(false);
+    setNewProjectForm({ name: "", columnId: "" });
   };
 
   const handleDeleteCard = (cardId) => {
@@ -5185,13 +5351,6 @@ const ProjectsView = ({ data, updateData }) => {
                           <h4 className="font-medium text-gray-200 text-sm flex-1 leading-tight">{card.name}</h4>
                           <div className="flex gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
                             <button
-                              onClick={() => handleEditCard(card)}
-                              className="p-1 hover:bg-gray-700 rounded"
-                              title="Editar projeto"
-                            >
-                              <Edit2 size={12} className="text-gray-500" />
-                            </button>
-                            <button
                               onClick={() => handleDeleteCard(card.id)}
                               className="p-1 hover:bg-red-900/50 rounded"
                               title="Excluir projeto"
@@ -5283,9 +5442,8 @@ const ProjectsView = ({ data, updateData }) => {
                 {/* Add card button */}
                 <button
                   onClick={() => {
-                    setEditingCard(null);
-                    setCardForm({ name: "", description: "", clientId: "", responsibleId: "", columnId: column.id, deadline: "", estimatedHours: 0 });
-                    setIsCardModalOpen(true);
+                    setNewProjectForm({ name: "", columnId: column.id });
+                    setIsNewProjectModalOpen(true);
                   }}
                   className="m-2 p-2 border-2 border-dashed border-gray-700 rounded-xl text-gray-500 hover:border-gray-600 hover:text-gray-400 transition-colors flex items-center justify-center gap-2"
                 >
@@ -5306,77 +5464,26 @@ const ProjectsView = ({ data, updateData }) => {
         </div>
       </div>
 
-      {/* Modal Novo/Editar Card */}
-      <Modal isOpen={isCardModalOpen} onClose={() => setIsCardModalOpen(false)} title={editingCard ? "Editar Projeto" : "Novo Projeto"}>
+      {/* Modal Novo Projeto */}
+      <Modal isOpen={isNewProjectModalOpen} onClose={() => setIsNewProjectModalOpen(false)} title="Novo Projeto">
         <div className="space-y-4">
           <Input
             label="Nome do Projeto"
-            value={cardForm.name}
-            onChange={(v) => setCardForm({...cardForm, name: v})}
+            value={newProjectForm.name}
+            onChange={(v) => setNewProjectForm({...newProjectForm, name: v})}
             placeholder="Ex: Identidade Visual - Cliente X"
           />
-
-          <div>
-            <label className="text-sm text-gray-300 mb-1 block">Descrição</label>
-            <textarea
-              value={cardForm.description}
-              onChange={(e) => setCardForm({...cardForm, description: e.target.value})}
-              placeholder="Detalhes do projeto..."
-              className="w-full p-3 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 placeholder-gray-500 focus:border-lime-500 focus:outline-none resize-none"
-              rows={3}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <Select
-              label="Coluna"
-              value={cardForm.columnId}
-              onChange={(v) => setCardForm({...cardForm, columnId: v})}
-              options={columns.map(c => ({ value: c.id, label: c.name }))}
-            />
-            <Input
-              label="Prazo"
-              type="date"
-              value={cardForm.deadline}
-              onChange={(v) => setCardForm({...cardForm, deadline: v})}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <Input
-              label="Horas Estimadas"
-              type="number"
-              value={cardForm.estimatedHours || ""}
-              onChange={(v) => setCardForm({...cardForm, estimatedHours: parseFloat(v) || 0})}
-              placeholder="Ex: 40"
-            />
-            <Select
-              label="Responsável"
-              value={cardForm.responsibleId?.toString() || ""}
-              onChange={(v) => setCardForm({...cardForm, responsibleId: v ? (parseInt(v) || v) : ""})}
-              options={[
-                { value: "", label: "Nenhum responsável" },
-                ...teamMembers.map(m => ({ value: m.id.toString(), label: m.name }))
-              ]}
-            />
-          </div>
-
           <Select
-            label="Vincular a Cliente"
-            value={cardForm.clientId?.toString() || ""}
-            onChange={(v) => setCardForm({...cardForm, clientId: v ? (parseInt(v) || v) : ""})}
-            options={[
-              { value: "", label: "Nenhum cliente" },
-              ...clients.map(c => ({
-                value: c.id.toString(),
-                label: `${c.name}${c.company ? ` - ${c.company}` : ''}`
-              }))
-            ]}
+            label="Coluna"
+            value={newProjectForm.columnId}
+            onChange={(v) => setNewProjectForm({...newProjectForm, columnId: v})}
+            options={columns.map(c => ({ value: c.id, label: c.name }))}
           />
         </div>
-        <div className="flex justify-end gap-3 mt-6">
-          <Button variant="secondary" onClick={() => setIsCardModalOpen(false)}>Cancelar</Button>
-          <Button onClick={handleSaveCard}>{editingCard ? "Salvar" : "Criar Projeto"}</Button>
+        <p className="text-xs text-gray-600 mt-3">Os demais dados (cliente, responsável, prazo, etc.) podem ser preenchidos ao abrir o projeto.</p>
+        <div className="flex justify-end gap-3 mt-4">
+          <Button variant="secondary" onClick={() => setIsNewProjectModalOpen(false)}>Cancelar</Button>
+          <Button onClick={handleCreateProject}>Criar Projeto</Button>
         </div>
       </Modal>
 
