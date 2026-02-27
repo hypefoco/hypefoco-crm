@@ -5268,9 +5268,8 @@ const ProjectsView = ({ data, updateData }) => {
           <Button
             icon={Plus}
             onClick={() => {
-              setEditingCard(null);
-              setCardForm({ name: "", description: "", clientId: "", responsibleId: "", columnId: columns[0]?.id || "", deadline: "", estimatedHours: 0 });
-              setIsCardModalOpen(true);
+              setNewProjectForm({ name: "", columnId: columns[0]?.id || "" });
+              setIsNewProjectModalOpen(true);
             }}
           >
             Novo Projeto
@@ -10473,6 +10472,7 @@ const PautasView = ({ data, updateData }) => {
     title: "", type: "meeting", date: "", startTime: "09:00", endTime: "10:00", memberId: "",
   });
   const [editingEventId, setEditingEventId] = useState(null);
+  const [selectedProject, setSelectedProject] = useState(null);
 
   const teamMembers = data.teamMembers || [];
   const cards = data.projects?.cards || [];
@@ -10636,12 +10636,10 @@ const PautasView = ({ data, updateData }) => {
   // Tasks are the units that get scheduled in pautas (linked to projects)
   const allProjectTasks = data.projects?.tasks || [];
   const assignedTaskIds = new Set((pautas.assignments || []).map((a) => a.taskId).filter(Boolean));
-  // Also keep backward compat with old cardId assignments
-  const assignedCardIds = new Set((pautas.assignments || []).map((a) => a.cardId).filter(Boolean));
-  const taskBacklog = allProjectTasks.filter(t => !t.completed && !assignedTaskIds.has(t.id));
-  // Legacy backlog (project cards without tasks assigned) — kept for backward compat
-  const cardBacklog = cards.filter(c => !assignedCardIds.has(c.id) && c.columnId !== "entregue" && allProjectTasks.filter(t => t.projectId === c.id).length === 0);
-  const backlog = [...taskBacklog.map(t => ({ ...t, _type: 'task', _project: cards.find(c => c.id === t.projectId) })), ...cardBacklog.map(c => ({ ...c, _type: 'card' }))];
+  // Backlog: only project tasks that aren't assigned yet (no legacy card backlog)
+  const backlog = allProjectTasks
+    .filter(t => !t.completed && !assignedTaskIds.has(t.id))
+    .map(t => ({ ...t, _type: 'task', _project: cards.find(c => c.id === t.projectId) }));
 
   // ── Drag & Drop ───────────────────────────────────────────────────────────
   const handleDragStart = (e, item) => {
@@ -10678,6 +10676,18 @@ const PautasView = ({ data, updateData }) => {
   };
   const handleDeleteAssignment = (assignmentId) => {
     updateData((prev) => ({ ...prev, pautas: { ...(prev.pautas || {}), assignments: (prev.pautas?.assignments || []).filter((a) => a.id !== assignmentId) } }));
+  };
+
+  const handleToggleTaskComplete = (task) => {
+    updateData(prev => ({
+      ...prev,
+      projects: {
+        ...prev.projects,
+        tasks: (prev.projects?.tasks || []).map(t =>
+          t.id === task.id ? { ...t, completed: !t.completed } : t
+        )
+      }
+    }));
   };
 
   const handleDropOnBacklog = (e) => {
@@ -10823,6 +10833,7 @@ const PautasView = ({ data, updateData }) => {
                   draggable
                   onDragStart={(e) => handleDragStart(e, { type: "backlog", card: item })}
                   onDragEnd={() => setDraggedItem(null)}
+                  onClick={() => { const proj = item._project; if (proj) setSelectedProject(proj); }}
                   className={`flex-shrink-0 w-52 p-3 rounded-xl border cursor-grab active:cursor-grabbing transition-all ${isDragging ? "opacity-40 scale-95" : "hover:border-lime-700"} bg-gray-800 border-gray-700`}
                 >
                   {/* Task badge or card indicator */}
@@ -10833,7 +10844,7 @@ const PautasView = ({ data, updateData }) => {
                   <div className="flex items-center justify-between gap-2">
                     {col && (
                       <span className="text-xs px-2 py-0.5 rounded-full font-medium truncate" style={{ backgroundColor: col.color + "22", color: col.color }}>
-                        {isTask ? 'Tarefa' : col.name}
+                        {col.name}
                       </span>
                     )}
                     <div className="flex items-center gap-1.5 ml-auto">
@@ -10968,30 +10979,33 @@ const PautasView = ({ data, updateData }) => {
                       const isFirst = assignment.dayIndex === 1;
                       const isLast = assignment.dayIndex === assignment.totalDays;
                       const isMultiDay = assignment.totalDays > 1;
+                      const isCompleted = assignedTask?.completed || false;
                       return (
                         <div
                           key={assignment.id}
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, { type: "assignment", assignment, card })}
+                          draggable={!isCompleted}
+                          onDragStart={(e) => !isCompleted && handleDragStart(e, { type: "assignment", assignment, card })}
                           onDragEnd={() => setDraggedItem(null)}
-                          className={`group relative rounded-lg p-1.5 cursor-grab active:cursor-grabbing transition-all select-none ${isDraggingThis ? "opacity-40 scale-95" : "hover:opacity-90"}`}
+                          onClick={() => { if (card) setSelectedProject(card); }}
+                          className={`group relative rounded-lg p-1.5 transition-all select-none ${isCompleted ? "cursor-pointer opacity-70" : "cursor-grab active:cursor-grabbing"} ${isDraggingThis ? "opacity-40 scale-95" : "hover:opacity-90"}`}
                           style={{
-                            backgroundColor: color + "1a",
-                            borderLeft: `3px solid ${color}`,
-                            borderRight: isMultiDay && !isLast ? `2px dashed ${color}` : undefined,
+                            backgroundColor: isCompleted ? "#16a34a1a" : color + "1a",
+                            borderLeft: `3px solid ${isCompleted ? "#16a34a" : color}`,
+                            borderRight: isMultiDay && !isLast ? `2px dashed ${isCompleted ? "#16a34a" : color}` : undefined,
                             opacity: isDraggingThis ? 0.4 : 1,
                           }}
                         >
                           <div className="flex items-center gap-0.5">
-                            {!isFirst && <ChevronLeft size={9} style={{ color }} className="flex-shrink-0 opacity-70" />}
-                            <p className="text-xs font-semibold truncate leading-tight flex-1 pr-3" style={{ color }}>{displayName}</p>
-                            {!isLast && <ChevronRight size={9} style={{ color }} className="flex-shrink-0 opacity-70" />}
+                            {!isFirst && <ChevronLeft size={9} style={{ color: isCompleted ? "#16a34a" : color }} className="flex-shrink-0 opacity-70" />}
+                            {isCompleted && <Check size={9} className="text-emerald-400 flex-shrink-0" />}
+                            <p className={`text-xs font-semibold truncate leading-tight flex-1 pr-6 ${isCompleted ? "line-through text-emerald-600" : ""}`} style={{ color: isCompleted ? "#16a34a" : color }}>{displayName}</p>
+                            {!isLast && <ChevronRight size={9} style={{ color: isCompleted ? "#16a34a" : color }} className="flex-shrink-0 opacity-70" />}
                           </div>
                           <div className="flex items-center gap-1 mt-0.5">
                             <Clock size={9} className="text-gray-500" />
                             <span className="text-xs text-gray-500">{block?.hours.toFixed(1)}h</span>
                             {isMultiDay && (
-                              <span className="text-xs ml-auto font-medium opacity-60" style={{ color }}>
+                              <span className="text-xs ml-auto font-medium opacity-60" style={{ color: isCompleted ? "#16a34a" : color }}>
                                 {assignment.dayIndex}/{assignment.totalDays}d
                               </span>
                             )}
@@ -11001,8 +11015,18 @@ const PautasView = ({ data, updateData }) => {
                               {block?.startTime}–{block?.endTime} • {assignment.estimatedHours}h total
                             </p>
                           )}
+                          {/* Complete toggle */}
+                          {assignedTask && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleToggleTaskComplete(assignedTask); }}
+                              className="absolute top-1 right-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                              title={isCompleted ? "Desmarcar concluída" : "Marcar como concluída"}
+                            >
+                              <Check size={10} className={isCompleted ? "text-emerald-400" : "text-gray-500 hover:text-emerald-400"} />
+                            </button>
+                          )}
                           <button
-                            onClick={() => handleDeleteAssignment(assignment.id)}
+                            onClick={(e) => { e.stopPropagation(); handleDeleteAssignment(assignment.id); }}
                             className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity"
                             title="Remover atribuição"
                           >
@@ -11117,6 +11141,15 @@ const PautasView = ({ data, updateData }) => {
           </div>
         </div>
       </Modal>
+
+      {selectedProject && (
+        <ProjectDetailPanel
+          project={cards.find(c => c.id === selectedProject.id) || selectedProject}
+          data={data}
+          updateData={updateData}
+          onClose={() => setSelectedProject(null)}
+        />
+      )}
     </div>
   );
 };
