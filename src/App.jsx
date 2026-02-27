@@ -4442,8 +4442,10 @@ const ActivitiesView = ({ data, updateData, setActiveView }) => {
 // PROJECT DETAIL PANEL
 // ============================================
 const ProjectDetailPanel = ({ project, data, updateData, onClose }) => {
-  const [activeTab, setActiveTab] = useState('tasks');
   const [tick, setTick] = useState(0);
+  const [descValue, setDescValue] = useState(project.description || '');
+  const [nameValue, setNameValue] = useState(project.name || '');
+  const [showCronograma, setShowCronograma] = useState(false);
 
   // Task modal
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -4461,13 +4463,28 @@ const ProjectDetailPanel = ({ project, data, updateData, onClose }) => {
   const [editingPhase, setEditingPhase] = useState(null);
   const [phaseForm, setPhaseForm] = useState({ name: '', deadline: '', description: '' });
 
+  // Comments
+  const [commentText, setCommentText] = useState('');
+  const [commentAuthorId, setCommentAuthorId] = useState('');
+  const [editingCommentId, setEditingCommentId] = useState(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+
   const teamMembers = data.teamMembers || [];
   const allTasks = data.projects?.tasks || [];
   const tasks = allTasks.filter(t => t.projectId === project.id);
-  const client = (data.clients || []).find(c => c.id === project.clientId);
+  const clients = data.clients || [];
+  const columns = data.projects?.columns || [];
+  const client = clients.find(c => c.id === project.clientId || c.id === parseInt(project.clientId));
   const checklists = project.checklists || [];
   const schedulePhases = project.schedulePhases || [];
+  const comments = project.comments || [];
   const responsible = teamMembers.find(m => m.id === project.responsibleId || m.id === parseInt(project.responsibleId));
+
+  // Sync when project changes
+  useEffect(() => {
+    setDescValue(project.description || '');
+    setNameValue(project.name || '');
+  }, [project.id]);
 
   // Real-time tick for tracking display
   useEffect(() => {
@@ -4477,41 +4494,45 @@ const ProjectDetailPanel = ({ project, data, updateData, onClose }) => {
     return () => clearInterval(interval);
   }, [tasks]);
 
+  // ── Current phase / deadline logic ───────────────────────
+  const sortedPhases = [...schedulePhases].sort((a, b) => (a.deadline || '9999').localeCompare(b.deadline || '9999'));
+  const currentPhase = sortedPhases.find(p => !p.completed);
+  const effectiveDeadline = currentPhase?.deadline || project.deadline || null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const deadlineDate = effectiveDeadline ? new Date(effectiveDeadline + 'T00:00') : null;
+  const isOverdue = deadlineDate && deadlineDate < today;
+  const daysUntil = deadlineDate ? Math.ceil((deadlineDate - today) / 86400000) : null;
+
   // ── Helpers ──────────────────────────────────────────────
   const getMember = (id) => teamMembers.find(m => m.id === id || m.id === parseInt(id));
 
   const formatSeconds = (secs) => {
-    const total = Math.floor(secs);
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    const t = Math.floor(secs);
+    return `${String(Math.floor(t/3600)).padStart(2,'0')}:${String(Math.floor((t%3600)/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
   };
 
   const getTrackedSeconds = (task) => {
     let base = task.trackedSeconds || 0;
-    if (task.isTracking && task.trackingStartedAt) {
-      base += (Date.now() - task.trackingStartedAt) / 1000;
-    }
+    if (task.isTracking && task.trackingStartedAt) base += (Date.now() - task.trackingStartedAt) / 1000;
     return Math.floor(base);
   };
 
-  // ── Project/tasks updater helpers ─────────────────────────
-  const updateProjects = (updater) => {
-    updateData(prev => ({
-      ...prev,
-      projects: updater(prev.projects || { columns: [], cards: [], tasks: [] })
-    }));
+  const formatDateTime = (iso) => {
+    const d = new Date(iso);
+    return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
   };
 
-  const updateProjectCard = (updater) => {
-    updateData(prev => ({
-      ...prev,
-      projects: {
-        ...prev.projects,
-        cards: (prev.projects?.cards || []).map(c => c.id === project.id ? updater(c) : c)
-      }
-    }));
+  // ── Updater helpers ───────────────────────────────────────
+  const updateProjects = (updater) => updateData(prev => ({ ...prev, projects: updater(prev.projects || { columns: [], cards: [], tasks: [] }) }));
+
+  const updateProjectCard = (updater) => updateData(prev => ({
+    ...prev,
+    projects: { ...prev.projects, cards: (prev.projects?.cards || []).map(c => c.id === project.id ? updater(c) : c) }
+  }));
+
+  // ── Description ───────────────────────────────────────────
+  const handleDescBlur = () => {
+    if (descValue !== project.description) updateProjectCard(c => ({ ...c, description: descValue }));
   };
 
   // ── Task CRUD ─────────────────────────────────────────────
@@ -4519,631 +4540,550 @@ const ProjectDetailPanel = ({ project, data, updateData, onClose }) => {
     if (!taskForm.name) return;
     updateProjects(proj => {
       const tasks = proj.tasks || [];
-      if (editingTask) {
-        return { ...proj, tasks: tasks.map(t => t.id === editingTask.id ? { ...t, ...taskForm } : t) };
-      } else {
-        const newTask = {
-          ...taskForm,
-          id: Date.now(),
-          projectId: project.id,
-          trackedSeconds: 0,
-          isTracking: false,
-          trackingStartedAt: null,
-          completed: false,
-          checklists: [],
-          createdAt: new Date().toISOString()
-        };
-        return { ...proj, tasks: [...tasks, newTask] };
-      }
+      if (editingTask) return { ...proj, tasks: tasks.map(t => t.id === editingTask.id ? { ...t, ...taskForm } : t) };
+      const newTask = { ...taskForm, id: Date.now(), projectId: project.id, trackedSeconds: 0, isTracking: false, trackingStartedAt: null, completed: false, checklists: [], createdAt: new Date().toISOString() };
+      return { ...proj, tasks: [...tasks, newTask] };
     });
-    setIsTaskModalOpen(false);
-    setEditingTask(null);
+    setIsTaskModalOpen(false); setEditingTask(null);
     setTaskForm({ name: '', description: '', responsibleId: '', deadline: '', estimatedHours: 0 });
   };
 
-  const handleDeleteTask = (taskId) => {
-    if (!confirm('Excluir esta tarefa?')) return;
-    updateProjects(proj => ({ ...proj, tasks: (proj.tasks || []).filter(t => t.id !== taskId) }));
-  };
+  const handleDeleteTask = (taskId) => { if (!confirm('Excluir esta tarefa?')) return; updateProjects(proj => ({ ...proj, tasks: (proj.tasks || []).filter(t => t.id !== taskId) })); };
 
   const handleToggleTaskComplete = (task) => {
     if (task.isTracking) {
-      // Stop tracking first
-      updateProjects(proj => ({
-        ...proj,
-        tasks: (proj.tasks || []).map(t => {
-          if (t.id !== task.id) return t;
-          const elapsed = (Date.now() - (t.trackingStartedAt || Date.now())) / 1000;
-          return { ...t, isTracking: false, trackedSeconds: (t.trackedSeconds || 0) + elapsed, trackingStartedAt: null, completed: !t.completed };
-        })
-      }));
+      updateProjects(proj => ({ ...proj, tasks: (proj.tasks || []).map(t => { if (t.id !== task.id) return t; const el = (Date.now() - (t.trackingStartedAt || Date.now())) / 1000; return { ...t, isTracking: false, trackedSeconds: (t.trackedSeconds || 0) + el, trackingStartedAt: null, completed: !t.completed }; }) }));
     } else {
-      updateProjects(proj => ({
-        ...proj,
-        tasks: (proj.tasks || []).map(t => t.id === task.id ? { ...t, completed: !t.completed } : t)
-      }));
+      updateProjects(proj => ({ ...proj, tasks: (proj.tasks || []).map(t => t.id === task.id ? { ...t, completed: !t.completed } : t) }));
     }
   };
 
   const handleToggleTracking = (task) => {
-    updateProjects(proj => ({
-      ...proj,
-      tasks: (proj.tasks || []).map(t => {
-        if (t.id !== task.id) return t;
-        if (t.isTracking) {
-          const elapsed = (Date.now() - (t.trackingStartedAt || Date.now())) / 1000;
-          return { ...t, isTracking: false, trackedSeconds: (t.trackedSeconds || 0) + elapsed, trackingStartedAt: null };
-        } else {
-          return { ...t, isTracking: true, trackingStartedAt: Date.now() };
-        }
-      })
-    }));
-  };
-
-  // ── Checklist CRUD (project level) ───────────────────────
-  const handleAddProjectChecklist = () => {
-    if (!newChecklistName.trim()) return;
-    const newCl = { id: Date.now(), name: newChecklistName.trim(), items: [] };
-    updateProjectCard(c => ({ ...c, checklists: [...(c.checklists || []), newCl] }));
-    setNewChecklistName('');
-  };
-
-  const handleRenameProjectChecklist = (clId) => {
-    if (!checklistRenameValue.trim()) { setEditingChecklistName(null); return; }
-    updateProjectCard(c => ({
-      ...c,
-      checklists: (c.checklists || []).map(cl => cl.id === clId ? { ...cl, name: checklistRenameValue.trim() } : cl)
-    }));
-    setEditingChecklistName(null);
-  };
-
-  const handleDeleteProjectChecklist = (clId) => {
-    if (!confirm('Excluir esta checklist?')) return;
-    updateProjectCard(c => ({ ...c, checklists: (c.checklists || []).filter(cl => cl.id !== clId) }));
-  };
-
-  const handleAddChecklistItem = (clId, text) => {
-    if (!text.trim()) return;
-    updateProjectCard(c => ({
-      ...c,
-      checklists: (c.checklists || []).map(cl =>
-        cl.id === clId
-          ? { ...cl, items: [...(cl.items || []), { id: Date.now(), text: text.trim(), checked: false, deadline: '', responsibleId: '' }] }
-          : cl
-      )
-    }));
-  };
-
-  const handleToggleChecklistItem = (clId, itemId) => {
-    updateProjectCard(c => ({
-      ...c,
-      checklists: (c.checklists || []).map(cl =>
-        cl.id === clId
-          ? { ...cl, items: (cl.items || []).map(item => item.id === itemId ? { ...item, checked: !item.checked } : item) }
-          : cl
-      )
-    }));
-  };
-
-  const handleDeleteChecklistItem = (clId, itemId) => {
-    updateProjectCard(c => ({
-      ...c,
-      checklists: (c.checklists || []).map(cl =>
-        cl.id === clId ? { ...cl, items: (cl.items || []).filter(item => item.id !== itemId) } : cl
-      )
-    }));
-  };
-
-  const handleUpdateChecklistItem = (clId, itemId, updates) => {
-    updateProjectCard(c => ({
-      ...c,
-      checklists: (c.checklists || []).map(cl =>
-        cl.id === clId
-          ? { ...cl, items: (cl.items || []).map(item => item.id === itemId ? { ...item, ...updates } : item) }
-          : cl
-      )
-    }));
+    updateProjects(proj => ({ ...proj, tasks: (proj.tasks || []).map(t => { if (t.id !== task.id) return t; if (t.isTracking) { const el = (Date.now() - (t.trackingStartedAt || Date.now())) / 1000; return { ...t, isTracking: false, trackedSeconds: (t.trackedSeconds || 0) + el, trackingStartedAt: null }; } return { ...t, isTracking: true, trackingStartedAt: Date.now() }; }) }));
   };
 
   // ── Phase CRUD ────────────────────────────────────────────
   const handleSavePhase = () => {
     if (!phaseForm.name) return;
-    updateProjectCard(c => {
-      const phases = c.schedulePhases || [];
-      if (editingPhase) {
-        return { ...c, schedulePhases: phases.map(p => p.id === editingPhase.id ? { ...p, ...phaseForm } : p) };
-      } else {
-        return { ...c, schedulePhases: [...phases, { ...phaseForm, id: Date.now() }] };
-      }
-    });
-    setIsPhaseModalOpen(false);
-    setEditingPhase(null);
-    setPhaseForm({ name: '', deadline: '', description: '' });
+    updateProjectCard(c => { const phases = c.schedulePhases || []; if (editingPhase) return { ...c, schedulePhases: phases.map(p => p.id === editingPhase.id ? { ...p, ...phaseForm } : p) }; return { ...c, schedulePhases: [...phases, { ...phaseForm, id: Date.now(), completed: false }] }; });
+    setIsPhaseModalOpen(false); setEditingPhase(null); setPhaseForm({ name: '', deadline: '', description: '' });
   };
 
-  const handleDeletePhase = (phaseId) => {
-    if (!confirm('Excluir esta fase?')) return;
-    updateProjectCard(c => ({ ...c, schedulePhases: (c.schedulePhases || []).filter(p => p.id !== phaseId) }));
+  const handleDeletePhase = (phaseId) => { if (!confirm('Excluir esta fase?')) return; updateProjectCard(c => ({ ...c, schedulePhases: (c.schedulePhases || []).filter(p => p.id !== phaseId) })); };
+
+  const handleTogglePhaseComplete = (phaseId) => updateProjectCard(c => ({ ...c, schedulePhases: (c.schedulePhases || []).map(p => p.id === phaseId ? { ...p, completed: !p.completed } : p) }));
+
+  // ── Checklist CRUD ────────────────────────────────────────
+  const handleAddProjectChecklist = () => { if (!newChecklistName.trim()) return; updateProjectCard(c => ({ ...c, checklists: [...(c.checklists || []), { id: Date.now(), name: newChecklistName.trim(), items: [] }] })); setNewChecklistName(''); };
+  const handleRenameProjectChecklist = (clId) => { if (!checklistRenameValue.trim()) { setEditingChecklistName(null); return; } updateProjectCard(c => ({ ...c, checklists: (c.checklists || []).map(cl => cl.id === clId ? { ...cl, name: checklistRenameValue.trim() } : cl) })); setEditingChecklistName(null); };
+  const handleDeleteProjectChecklist = (clId) => { if (!confirm('Excluir esta checklist?')) return; updateProjectCard(c => ({ ...c, checklists: (c.checklists || []).filter(cl => cl.id !== clId) })); };
+  const handleAddChecklistItem = (clId, text) => { if (!text.trim()) return; updateProjectCard(c => ({ ...c, checklists: (c.checklists || []).map(cl => cl.id === clId ? { ...cl, items: [...(cl.items || []), { id: Date.now(), text: text.trim(), checked: false, deadline: '', responsibleId: '' }] } : cl) })); };
+  const handleToggleChecklistItem = (clId, itemId) => updateProjectCard(c => ({ ...c, checklists: (c.checklists || []).map(cl => cl.id === clId ? { ...cl, items: (cl.items || []).map(item => item.id === itemId ? { ...item, checked: !item.checked } : item) } : cl) }));
+  const handleDeleteChecklistItem = (clId, itemId) => updateProjectCard(c => ({ ...c, checklists: (c.checklists || []).map(cl => cl.id === clId ? { ...cl, items: (cl.items || []).filter(item => item.id !== itemId) } : cl) }));
+  const handleUpdateChecklistItem = (clId, itemId, updates) => updateProjectCard(c => ({ ...c, checklists: (c.checklists || []).map(cl => cl.id === clId ? { ...cl, items: (cl.items || []).map(item => item.id === itemId ? { ...item, ...updates } : item) } : cl) }));
+
+  // ── Comment CRUD ──────────────────────────────────────────
+  const handleAddComment = () => {
+    if (!commentText.trim() || !commentAuthorId) return;
+    updateProjectCard(c => ({
+      ...c,
+      comments: [...(c.comments || []), { id: Date.now(), authorId: commentAuthorId, text: commentText.trim(), createdAt: new Date().toISOString(), editedAt: null }]
+    }));
+    setCommentText('');
   };
 
-  const tabs = [
-    { id: 'tasks', label: 'Tarefas', icon: CheckSquare },
-    { id: 'cronograma', label: 'Cronograma', icon: CalendarRange },
-    { id: 'checklists', label: 'Checklists', icon: ListChecks },
-  ];
+  const handleSaveEditComment = (commentId) => {
+    if (!editingCommentText.trim()) return;
+    updateProjectCard(c => ({
+      ...c,
+      comments: (c.comments || []).map(cm => cm.id === commentId ? { ...cm, text: editingCommentText.trim(), editedAt: new Date().toISOString() } : cm)
+    }));
+    setEditingCommentId(null);
+    setEditingCommentText('');
+  };
+
+  const handleDeleteComment = (commentId) => {
+    if (!confirm('Excluir este comentário?')) return;
+    updateProjectCard(c => ({ ...c, comments: (c.comments || []).filter(cm => cm.id !== commentId) }));
+  };
+
+  const inputCls = "bg-gray-800/50 border border-gray-700/60 rounded-lg px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-lime-500 transition-colors";
 
   return (
-    <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center gap-4 px-6 py-4 border-b border-gray-800 flex-shrink-0">
-        <button
-          onClick={onClose}
-          className="flex items-center gap-1.5 text-gray-400 hover:text-gray-200 transition-colors px-3 py-1.5 rounded-xl hover:bg-gray-800"
-        >
-          <ChevronLeft size={18} />
-          <span className="text-sm">Projetos</span>
-        </button>
-        <div className="w-px h-6 bg-gray-700" />
-        <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold text-gray-100 truncate">{project.name}</h1>
-          {client && (
-            <p className="text-sm text-gray-500">
-              {client.name}{client.company ? ` · ${client.company}` : ''}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-4 flex-shrink-0">
-          {project.deadline && (
-            <span className="text-sm text-amber-400 flex items-center gap-1.5">
-              <Calendar size={14} />
-              Prazo: {new Date(project.deadline + 'T12:00').toLocaleDateString('pt-BR')}
-            </span>
-          )}
-          {tasks.length > 0 && (
-            <span className="text-sm text-gray-500 flex items-center gap-1.5">
-              <CheckSquare size={14} />
-              {tasks.filter(t => t.completed).length}/{tasks.length} tarefas
-            </span>
-          )}
-          {responsible && (
-            <div className="flex items-center gap-2">
-              {responsible.photo ? (
-                <img src={responsible.photo} alt={responsible.name} className="w-8 h-8 rounded-full object-cover border-2 border-lime-500" />
-              ) : (
-                <div className="w-8 h-8 rounded-full bg-lime-500/20 border-2 border-lime-500 flex items-center justify-center">
-                  <span className="text-lime-400 text-xs font-bold">{responsible.name?.[0]}</span>
-                </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Modal */}
+      <div className="relative w-full max-w-5xl max-h-[88vh] flex flex-col bg-gray-900 rounded-2xl border border-gray-800 shadow-2xl overflow-hidden">
+
+        {/* ─── Header ─── */}
+        <div className="flex-shrink-0 border-b border-gray-800 px-6 py-4">
+          {/* Row 1: close + name + cronograma button */}
+          <div className="flex items-center gap-3 mb-3">
+            <button onClick={onClose} className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-500 hover:text-gray-300 transition-colors flex-shrink-0">
+              <X size={16} />
+            </button>
+            <input
+              value={nameValue}
+              onChange={e => setNameValue(e.target.value)}
+              onBlur={() => nameValue.trim() && nameValue !== project.name && updateProjectCard(c => ({ ...c, name: nameValue.trim() }))}
+              className="flex-1 min-w-0 bg-transparent text-base font-bold text-gray-100 focus:outline-none border-b border-transparent focus:border-lime-500 transition-colors pb-0.5"
+            />
+            <button
+              onClick={() => setShowCronograma(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex-shrink-0 ${
+                showCronograma
+                  ? 'bg-lime-500/20 border border-lime-500/40 text-lime-400'
+                  : 'bg-gray-800 border border-gray-700/60 text-gray-400 hover:text-gray-200 hover:border-gray-600'
+              }`}
+            >
+              <CalendarRange size={12} /> Cronograma
+            </button>
+          </div>
+
+          {/* Row 2: editable meta fields */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pl-9">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-600">Responsável:</span>
+              <select
+                value={project.responsibleId?.toString() || ''}
+                onChange={e => updateProjectCard(c => ({ ...c, responsibleId: e.target.value ? (parseInt(e.target.value) || e.target.value) : '' }))}
+                className={inputCls}
+              >
+                <option value="">Nenhum</option>
+                {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+              {responsible && (responsible.photo
+                ? <img src={responsible.photo} alt="" className="w-5 h-5 rounded-full object-cover border border-lime-500/40" />
+                : <div className="w-5 h-5 rounded-full bg-lime-500/20 border border-lime-500/40 flex items-center justify-center"><span className="text-lime-400 text-[10px] font-bold">{responsible.name?.[0]}</span></div>
               )}
-              <span className="text-sm text-gray-400">{responsible.name}</span>
             </div>
-          )}
+            <span className="text-gray-700 text-xs">·</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-600">Cliente:</span>
+              <select
+                value={project.clientId?.toString() || ''}
+                onChange={e => updateProjectCard(c => ({ ...c, clientId: e.target.value ? (parseInt(e.target.value) || e.target.value) : '' }))}
+                className={inputCls}
+              >
+                <option value="">Nenhum</option>
+                {clients.map(cl => <option key={cl.id} value={cl.id}>{cl.name}{cl.company ? ` · ${cl.company}` : ''}</option>)}
+              </select>
+            </div>
+            <span className="text-gray-700 text-xs">·</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-600">Coluna:</span>
+              <select
+                value={project.columnId?.toString() || ''}
+                onChange={e => updateProjectCard(c => ({ ...c, columnId: e.target.value }))}
+                className={inputCls}
+              >
+                {columns.map(col => <option key={col.id} value={col.id}>{col.name}</option>)}
+              </select>
+            </div>
+            <span className="text-gray-700 text-xs">·</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-600">Prazo:</span>
+              <input
+                type="date"
+                value={project.deadline || ''}
+                onChange={e => updateProjectCard(c => ({ ...c, deadline: e.target.value }))}
+                className={inputCls}
+              />
+            </div>
+            <span className="text-gray-700 text-xs">·</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-600">Horas:</span>
+              <input
+                type="number"
+                defaultValue={project.estimatedHours || ''}
+                onBlur={e => updateProjectCard(c => ({ ...c, estimatedHours: parseFloat(e.target.value) || 0 }))}
+                placeholder="0"
+                className={`${inputCls} w-16`}
+              />
+            </div>
+          </div>
+
+          {/* Row 3: deadline badge + task count */}
+          <div className="flex items-center gap-2 pl-9 mt-2">
+            {effectiveDeadline ? (
+              <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs font-medium ${
+                isOverdue ? 'bg-red-900/30 border border-red-700/50 text-red-400'
+                  : daysUntil !== null && daysUntil <= 7 ? 'bg-amber-900/30 border border-amber-700/40 text-amber-400'
+                  : 'bg-gray-800/60 border border-gray-700/50 text-gray-500'
+              }`}>
+                <Calendar size={10} />
+                {currentPhase && <span className="text-gray-600 mr-0.5 max-w-[100px] truncate">{currentPhase.name} ·</span>}
+                {new Date(effectiveDeadline + 'T12:00').toLocaleDateString('pt-BR')}
+                {isOverdue && <span className="ml-1 font-bold text-red-300">· Atrasado</span>}
+                {!isOverdue && daysUntil !== null && daysUntil <= 7 && daysUntil > 0 && <span className="ml-1 text-amber-300">· {daysUntil}d</span>}
+                {!isOverdue && daysUntil === 0 && <span className="ml-1 font-bold text-amber-300">· Hoje!</span>}
+              </div>
+            ) : null}
+            {tasks.length > 0 && (
+              <span className="text-xs text-gray-600 flex items-center gap-1">
+                <CheckSquare size={10} />
+                {tasks.filter(t => t.completed).length}/{tasks.length} tarefas
+              </span>
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Tabs */}
-      <div className="flex gap-0 px-6 border-b border-gray-800 flex-shrink-0">
-        {tabs.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === tab.id
-                ? 'border-lime-500 text-lime-400'
-                : 'border-transparent text-gray-500 hover:text-gray-300'
-            }`}
-          >
-            <tab.icon size={16} />
-            {tab.label}
-            {tab.id === 'tasks' && tasks.length > 0 && (
-              <span className="px-1.5 py-0.5 bg-gray-800 rounded text-xs text-gray-400">{tasks.length}</span>
-            )}
-            {tab.id === 'checklists' && checklists.length > 0 && (
-              <span className="px-1.5 py-0.5 bg-gray-800 rounded text-xs text-gray-400">{checklists.length}</span>
-            )}
-          </button>
-        ))}
-      </div>
+        {/* ─── Body: 2 columns ─── */}
+        <div className="flex flex-1 min-h-0">
 
-      {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+          {/* Left column */}
+          <div className="flex-1 overflow-y-auto min-w-0">
+            {!showCronograma ? (
+              <>
+                {/* Description */}
+                <div className="px-6 py-4 border-b border-gray-800/60">
+                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">Descrição</p>
+                  <textarea
+                    value={descValue}
+                    onChange={e => setDescValue(e.target.value)}
+                    onBlur={handleDescBlur}
+                    placeholder="Adicione uma descrição ao projeto..."
+                    className="w-full bg-transparent text-sm text-gray-300 placeholder-gray-700 resize-none focus:outline-none leading-relaxed min-h-[56px]"
+                    rows={3}
+                  />
+                </div>
 
-        {/* ─── TAREFAS ─── */}
-        {activeTab === 'tasks' && (
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="font-semibold text-gray-200">Tarefas do Projeto</h2>
-              <Button icon={Plus} size="sm" onClick={() => { setEditingTask(null); setTaskForm({ name: '', description: '', responsibleId: '', deadline: '', estimatedHours: 0 }); setIsTaskModalOpen(true); }}>
-                Nova Tarefa
-              </Button>
+                {/* ─── Tarefas ─── */}
+                <div className="px-6 py-4 border-b border-gray-800/60">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <CheckSquare size={13} className="text-gray-500" />
+                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Tarefas</span>
+                {tasks.length > 0 && <span className="text-xs text-gray-600">({tasks.filter(t=>t.completed).length}/{tasks.length})</span>}
+              </div>
+              <button
+                onClick={() => { setEditingTask(null); setTaskForm({ name: '', description: '', responsibleId: '', deadline: '', estimatedHours: 0 }); setIsTaskModalOpen(true); }}
+                className="flex items-center gap-1 text-xs text-lime-400 hover:text-lime-300 px-2 py-1 rounded-lg hover:bg-lime-500/10 transition-colors"
+              >
+                <Plus size={12} /> Nova tarefa
+              </button>
             </div>
 
             {tasks.length === 0 ? (
-              <div className="text-center py-20 text-gray-600">
-                <CheckSquare size={48} className="mx-auto mb-3 opacity-30" />
-                <p className="font-medium">Nenhuma tarefa criada</p>
-                <p className="text-sm mt-1">Crie tarefas para organizar e distribuir o trabalho deste projeto</p>
-              </div>
+              <p className="text-xs text-gray-700 text-center py-3">Nenhuma tarefa. Clique em "Nova tarefa" para começar.</p>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-1.5">
                 {tasks.map(task => {
                   const member = getMember(task.responsibleId);
                   const trackedSecs = getTrackedSeconds(task);
-                  const isOverdue = task.deadline && !task.completed && new Date(task.deadline + 'T23:59') < new Date();
+                  const isTaskOverdue = task.deadline && !task.completed && new Date(task.deadline + 'T23:59') < today;
                   return (
-                    <div key={task.id} className={`bg-gray-900 border rounded-xl p-4 transition-all ${
-                      task.completed ? 'border-gray-800 opacity-70' : isOverdue ? 'border-red-800/60' : 'border-gray-800 hover:border-gray-700'
+                    <div key={task.id} className={`group rounded-xl p-2.5 transition-all ${
+                      task.completed ? 'bg-gray-800/20' : isTaskOverdue ? 'bg-red-900/10 border border-red-800/30' : 'bg-gray-800/50 hover:bg-gray-800'
                     }`}>
-                      <div className="flex items-start gap-3">
-                        {/* Complete toggle */}
-                        <button onClick={() => handleToggleTaskComplete(task)} className="mt-0.5 flex-shrink-0">
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => handleToggleTaskComplete(task)} className="flex-shrink-0">
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${
                             task.completed ? 'bg-emerald-500 border-emerald-500' : 'border-gray-600 hover:border-lime-500'
                           }`}>
-                            {task.completed && <Check size={11} className="text-white" />}
+                            {task.completed && <Check size={9} className="text-white" />}
                           </div>
                         </button>
-
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h3 className={`font-medium text-sm ${task.completed ? 'line-through text-gray-500' : 'text-gray-200'}`}>
-                              {task.name}
-                            </h3>
-                            {isOverdue && <span className="text-xs text-red-400 font-medium flex-shrink-0">Atrasada</span>}
-                            {task.isTracking && <span className="text-xs text-lime-400 font-medium flex-shrink-0 animate-pulse">● Gravando</span>}
-                          </div>
-                          {task.description && (
-                            <p className="text-xs text-gray-500 mb-2">{task.description}</p>
-                          )}
-                          <div className="flex flex-wrap gap-3 text-xs text-gray-500">
-                            {member && (
-                              <div className="flex items-center gap-1.5">
-                                {member.photo ? (
-                                  <img src={member.photo} alt={member.name} className="w-4 h-4 rounded-full object-cover" />
-                                ) : (
-                                  <div className="w-4 h-4 rounded-full bg-lime-500/20 flex items-center justify-center">
-                                    <span className="text-lime-400 text-xs">{member.name?.[0]}</span>
-                                  </div>
-                                )}
-                                <span>{member.name}</span>
-                              </div>
-                            )}
-                            {task.deadline && (
-                              <span className={`flex items-center gap-1 ${isOverdue ? 'text-red-400' : ''}`}>
-                                <Calendar size={11} /> {new Date(task.deadline + 'T12:00').toLocaleDateString('pt-BR')}
-                              </span>
-                            )}
-                            {task.estimatedHours > 0 && (
-                              <span className="flex items-center gap-1">
-                                <Clock size={11} /> {task.estimatedHours}h est.
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Time tracking */}
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <div className="text-right min-w-16">
-                            <p className={`text-xs font-mono font-bold ${task.isTracking ? 'text-lime-400' : 'text-gray-500'}`}>
-                              {formatSeconds(trackedSecs)}
-                            </p>
-                            <p className="text-xs text-gray-700">real</p>
-                          </div>
-                          {!task.completed && (
-                            <button
-                              onClick={() => handleToggleTracking(task)}
-                              title={task.isTracking ? 'Pausar cronômetro' : 'Iniciar cronômetro'}
-                              className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
-                                task.isTracking
-                                  ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
-                                  : 'bg-lime-500/20 hover:bg-lime-500/30 text-lime-400'
-                              }`}
-                            >
-                              {task.isTracking ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
-                            </button>
-                          )}
-                          <div className="flex gap-0.5">
-                            <button
-                              onClick={() => { setEditingTask(task); setTaskForm({ name: task.name, description: task.description || '', responsibleId: task.responsibleId || '', deadline: task.deadline || '', estimatedHours: task.estimatedHours || 0 }); setIsTaskModalOpen(true); }}
-                              className="p-1.5 hover:bg-gray-800 rounded-lg"
-                            >
-                              <Edit2 size={13} className="text-gray-500" />
-                            </button>
-                            <button onClick={() => handleDeleteTask(task.id)} className="p-1.5 hover:bg-red-900/30 rounded-lg">
-                              <Trash2 size={13} className="text-red-500" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Summary cards */}
-            {tasks.length > 0 && (
-              <div className="mt-6 grid grid-cols-3 gap-3">
-                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-                  <p className="text-2xl font-bold text-gray-200">{tasks.filter(t => t.completed).length}<span className="text-gray-600 text-lg">/{tasks.length}</span></p>
-                  <p className="text-xs text-gray-500 mt-1">Concluídas</p>
-                </div>
-                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-                  <p className="text-2xl font-bold text-gray-200">{tasks.reduce((s, t) => s + (t.estimatedHours || 0), 0)}<span className="text-gray-600 text-base">h</span></p>
-                  <p className="text-xs text-gray-500 mt-1">Horas Estimadas</p>
-                </div>
-                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-                  <p className="text-xl font-bold text-lime-400 font-mono">{formatSeconds(tasks.reduce((s, t) => s + getTrackedSeconds(t), 0))}</p>
-                  <p className="text-xs text-gray-500 mt-1">Tempo Rastreado</p>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ─── CRONOGRAMA ─── */}
-        {activeTab === 'cronograma' && (
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="font-semibold text-gray-200">Cronograma de Entregas</h2>
-              <Button icon={Plus} size="sm" onClick={() => { setEditingPhase(null); setPhaseForm({ name: '', deadline: '', description: '' }); setIsPhaseModalOpen(true); }}>
-                Nova Fase
-              </Button>
-            </div>
-
-            {schedulePhases.length === 0 ? (
-              <div className="text-center py-20 text-gray-600">
-                <CalendarRange size={48} className="mx-auto mb-3 opacity-30" />
-                <p className="font-medium">Nenhuma fase cadastrada</p>
-                <p className="text-sm mt-1">Adicione as etapas do projeto com seus prazos de entrega</p>
-              </div>
-            ) : (
-              <div className="relative pl-8">
-                <div className="absolute left-3 top-2 bottom-2 w-0.5 bg-gray-800 rounded-full" />
-                <div className="space-y-4">
-                  {[...schedulePhases].sort((a, b) => (a.deadline || '').localeCompare(b.deadline || '')).map((phase, idx) => {
-                    const isOverdue = phase.deadline && new Date(phase.deadline + 'T23:59') < new Date();
-                    const isFuture = phase.deadline && new Date(phase.deadline + 'T23:59') > new Date();
-                    return (
-                      <div key={phase.id} className="relative flex gap-4">
-                        <div className={`absolute -left-5 top-4 w-4 h-4 rounded-full border-2 ${
-                          isOverdue ? 'border-red-500 bg-red-900/40' : 'border-lime-500 bg-lime-900/20'
-                        }`} />
-                        <div className="flex-1 bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition-colors">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1">
-                              <h3 className="font-medium text-gray-200">{phase.name}</h3>
-                              {phase.description && <p className="text-sm text-gray-500 mt-1">{phase.description}</p>}
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0">
-                              {phase.deadline && (
-                                <span className={`text-sm flex items-center gap-1 font-medium ${isOverdue ? 'text-red-400' : 'text-amber-400'}`}>
-                                  <Calendar size={13} />
-                                  {new Date(phase.deadline + 'T12:00').toLocaleDateString('pt-BR')}
-                                </span>
-                              )}
-                              <button onClick={() => { setEditingPhase(phase); setPhaseForm({ name: phase.name, deadline: phase.deadline || '', description: phase.description || '' }); setIsPhaseModalOpen(true); }} className="p-1.5 hover:bg-gray-800 rounded-lg">
-                                <Edit2 size={13} className="text-gray-500" />
-                              </button>
-                              <button onClick={() => handleDeletePhase(phase.id)} className="p-1.5 hover:bg-red-900/30 rounded-lg">
-                                <Trash2 size={13} className="text-red-500" />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ─── CHECKLISTS ─── */}
-        {activeTab === 'checklists' && (
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="font-semibold text-gray-200">Checklists do Projeto</h2>
-            </div>
-
-            {/* Create new checklist */}
-            <div className="flex gap-2 mb-6">
-              <input
-                value={newChecklistName}
-                onChange={(e) => setNewChecklistName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAddProjectChecklist()}
-                placeholder="Nome da nova checklist..."
-                className="flex-1 px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-lime-500"
-              />
-              <Button icon={Plus} onClick={handleAddProjectChecklist} disabled={!newChecklistName.trim()}>
-                Criar
-              </Button>
-            </div>
-
-            {checklists.length === 0 ? (
-              <div className="text-center py-20 text-gray-600">
-                <ListChecks size={48} className="mx-auto mb-3 opacity-30" />
-                <p className="font-medium">Nenhuma checklist</p>
-                <p className="text-sm mt-1">Crie checklists para organizar itens e sub-tarefas do projeto</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {checklists.map(cl => {
-                  const completedCount = (cl.items || []).filter(i => i.checked).length;
-                  const totalCount = (cl.items || []).length;
-                  const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
-                  return (
-                    <div key={cl.id} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-                      {/* Header */}
-                      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-800">
-                        {editingChecklistName === cl.id ? (
-                          <input
-                            value={checklistRenameValue}
-                            onChange={(e) => setChecklistRenameValue(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') handleRenameProjectChecklist(cl.id); if (e.key === 'Escape') setEditingChecklistName(null); }}
-                            onBlur={() => handleRenameProjectChecklist(cl.id)}
-                            autoFocus
-                            className="flex-1 px-2 py-1 bg-gray-800 border border-lime-500 rounded-lg text-gray-200 text-sm focus:outline-none"
-                          />
-                        ) : (
-                          <h3 className="flex-1 font-semibold text-gray-200">{cl.name}</h3>
+                        <span className={`flex-1 text-sm min-w-0 truncate ${task.completed ? 'line-through text-gray-600' : 'text-gray-200'}`}>{task.name}</span>
+                        {task.isTracking && <span className="text-xs text-lime-400 animate-pulse flex-shrink-0">●</span>}
+                        <span className={`text-xs font-mono flex-shrink-0 tabular-nums ${task.isTracking ? 'text-lime-400' : 'text-gray-600'}`}>{formatSeconds(trackedSecs)}</span>
+                        {!task.completed && (
+                          <button onClick={() => handleToggleTracking(task)} className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${task.isTracking ? 'bg-red-500/20 text-red-400' : 'bg-lime-500/10 text-lime-500 hover:bg-lime-500/20'}`}>
+                            {task.isTracking ? <Square size={9} fill="currentColor" /> : <Play size={9} fill="currentColor" />}
+                          </button>
                         )}
-                        <span className="text-xs text-gray-500 font-mono">{completedCount}/{totalCount}</span>
-                        <button onClick={() => { setEditingChecklistName(cl.id); setChecklistRenameValue(cl.name); }} className="p-1.5 hover:bg-gray-800 rounded-lg">
-                          <Edit2 size={13} className="text-gray-500" />
-                        </button>
-                        <button onClick={() => handleDeleteProjectChecklist(cl.id)} className="p-1.5 hover:bg-red-900/30 rounded-lg">
-                          <Trash2 size={13} className="text-red-500" />
-                        </button>
+                        <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => { setEditingTask(task); setTaskForm({ name: task.name, description: task.description || '', responsibleId: task.responsibleId || '', deadline: task.deadline || '', estimatedHours: task.estimatedHours || 0 }); setIsTaskModalOpen(true); }} className="p-1 hover:bg-gray-700 rounded"><Edit2 size={11} className="text-gray-500" /></button>
+                          <button onClick={() => handleDeleteTask(task.id)} className="p-1 hover:bg-red-900/30 rounded"><Trash2 size={11} className="text-red-500" /></button>
+                        </div>
                       </div>
-
-                      {/* Progress bar */}
-                      {totalCount > 0 && (
-                        <div className="px-4 py-2 border-b border-gray-800/50">
-                          <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                            <div className="h-full bg-lime-500 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
-                          </div>
+                      {(member || task.deadline || task.estimatedHours > 0) && (
+                        <div className="flex items-center gap-3 mt-1 pl-6 text-xs text-gray-600">
+                          {member && <span className="flex items-center gap-1">{member.photo ? <img src={member.photo} alt="" className="w-3 h-3 rounded-full object-cover" /> : <div className="w-3 h-3 rounded-full bg-lime-500/20" />}{member.name}</span>}
+                          {task.deadline && <span className={isTaskOverdue ? 'text-red-500' : ''}>{new Date(task.deadline + 'T12:00').toLocaleDateString('pt-BR')}</span>}
+                          {task.estimatedHours > 0 && <span>{task.estimatedHours}h est.</span>}
                         </div>
                       )}
-
-                      {/* Items */}
-                      <div className="px-4 py-2">
-                        {(cl.items || []).map(item => {
-                          const itemMember = getMember(item.responsibleId);
-                          return (
-                            <div key={item.id} className="group flex items-center gap-2 py-2 hover:bg-gray-800/30 rounded-lg px-2 -mx-2 transition-colors">
-                              <button onClick={() => handleToggleChecklistItem(cl.id, item.id)} className="flex-shrink-0">
-                                <div className={`w-4 h-4 rounded border transition-colors ${item.checked ? 'bg-lime-500 border-lime-500' : 'border-gray-600 hover:border-lime-500'}`}>
-                                  {item.checked && <Check size={10} className="text-gray-900 mx-auto mt-0.5" />}
-                                </div>
-                              </button>
-                              <span className={`flex-1 text-sm ${item.checked ? 'line-through text-gray-600' : 'text-gray-300'}`}>{item.text}</span>
-                              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                {/* Responsible for item */}
-                                <select
-                                  value={item.responsibleId || ''}
-                                  onChange={e => handleUpdateChecklistItem(cl.id, item.id, { responsibleId: e.target.value ? (parseInt(e.target.value) || e.target.value) : '' })}
-                                  className="text-xs bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-gray-400 focus:outline-none focus:border-lime-500"
-                                  title="Responsável"
-                                >
-                                  <option value="">Resp.</option>
-                                  {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                                </select>
-                                {/* Deadline for item */}
-                                <input
-                                  type="date"
-                                  value={item.deadline || ''}
-                                  onChange={e => handleUpdateChecklistItem(cl.id, item.id, { deadline: e.target.value })}
-                                  className="text-xs bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-gray-400 focus:outline-none focus:border-lime-500"
-                                  title="Prazo"
-                                />
-                                {itemMember && (
-                                  itemMember.photo
-                                    ? <img src={itemMember.photo} alt="" className="w-4 h-4 rounded-full object-cover" />
-                                    : <div className="w-4 h-4 rounded-full bg-lime-500/20 flex items-center justify-center"><span className="text-lime-400 text-xs">{itemMember.name?.[0]}</span></div>
-                                )}
-                                {item.deadline && (
-                                  <span className="text-xs text-gray-500">{new Date(item.deadline + 'T12:00').toLocaleDateString('pt-BR')}</span>
-                                )}
-                                <button onClick={() => handleDeleteChecklistItem(cl.id, item.id)} className="p-0.5 hover:bg-red-900/30 rounded">
-                                  <X size={11} className="text-gray-600 hover:text-red-400" />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {/* Add item input */}
-                        <div className="flex gap-2 mt-2 pt-2 border-t border-gray-800/50">
-                          <input
-                            value={checklistInputs[cl.id] || ''}
-                            onChange={(e) => setChecklistInputs(prev => ({ ...prev, [cl.id]: e.target.value }))}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && (checklistInputs[cl.id] || '').trim()) {
-                                handleAddChecklistItem(cl.id, checklistInputs[cl.id]);
-                                setChecklistInputs(prev => ({ ...prev, [cl.id]: '' }));
-                              }
-                            }}
-                            placeholder="Adicionar item... (Enter para confirmar)"
-                            className="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-lime-500"
-                          />
-                          <button
-                            onClick={() => {
-                              if ((checklistInputs[cl.id] || '').trim()) {
-                                handleAddChecklistItem(cl.id, checklistInputs[cl.id]);
-                                setChecklistInputs(prev => ({ ...prev, [cl.id]: '' }));
-                              }
-                            }}
-                            className="px-3 py-1.5 bg-lime-500/20 hover:bg-lime-500/30 text-lime-400 rounded-lg transition-colors"
-                          >
-                            <Plus size={15} />
-                          </button>
-                        </div>
-                      </div>
                     </div>
                   );
                 })}
               </div>
             )}
           </div>
-        )}
+
+                {/* ─── Checklists ─── */}
+                <div className="px-6 py-4 pb-8">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <ListChecks size={13} className="text-gray-500" />
+                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Checklists</span>
+                      {checklists.length > 0 && <span className="text-xs text-gray-600">({checklists.length})</span>}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mb-3">
+                    <input
+                      value={newChecklistName}
+                      onChange={e => setNewChecklistName(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleAddProjectChecklist()}
+                      placeholder="Nome da nova checklist..."
+                      className="flex-1 px-3 py-1.5 bg-gray-800/70 border border-gray-700/60 rounded-lg text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-lime-500"
+                    />
+                    <button onClick={handleAddProjectChecklist} disabled={!newChecklistName.trim()} className="px-3 py-1.5 bg-lime-500/20 hover:bg-lime-500/30 text-lime-400 rounded-lg text-sm transition-colors disabled:opacity-40 flex items-center gap-1 flex-shrink-0">
+                      <Plus size={13} /> Criar
+                    </button>
+                  </div>
+                  {checklists.length === 0 ? (
+                    <p className="text-xs text-gray-700 text-center py-2">Nenhuma checklist criada.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {checklists.map(cl => {
+                        const completedCount = (cl.items || []).filter(i => i.checked).length;
+                        const totalCount = (cl.items || []).length;
+                        const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
+                        return (
+                          <div key={cl.id} className="bg-gray-800/40 rounded-xl border border-gray-700/50 overflow-hidden">
+                            <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-700/40">
+                              {editingChecklistName === cl.id ? (
+                                <input value={checklistRenameValue} onChange={e => setChecklistRenameValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleRenameProjectChecklist(cl.id); if (e.key === 'Escape') setEditingChecklistName(null); }} onBlur={() => handleRenameProjectChecklist(cl.id)} autoFocus className="flex-1 px-2 py-0.5 bg-gray-800 border border-lime-500 rounded text-sm text-gray-200 focus:outline-none" />
+                              ) : (
+                                <span className="flex-1 text-sm font-semibold text-gray-200">{cl.name}</span>
+                              )}
+                              <span className="text-xs text-gray-600 font-mono">{completedCount}/{totalCount}</span>
+                              <button onClick={() => { setEditingChecklistName(cl.id); setChecklistRenameValue(cl.name); }} className="p-1 hover:bg-gray-700 rounded"><Edit2 size={11} className="text-gray-500" /></button>
+                              <button onClick={() => handleDeleteProjectChecklist(cl.id)} className="p-1 hover:bg-red-900/30 rounded"><Trash2 size={11} className="text-red-500" /></button>
+                            </div>
+                            {totalCount > 0 && (
+                              <div className="px-3 py-1.5 border-b border-gray-700/30">
+                                <div className="h-1 bg-gray-700 rounded-full overflow-hidden">
+                                  <div className="h-full bg-lime-500 rounded-full transition-all" style={{ width: `${progress}%` }} />
+                                </div>
+                              </div>
+                            )}
+                            <div className="px-3 pb-2">
+                              {(cl.items || []).map(item => {
+                                const itemMember = getMember(item.responsibleId);
+                                return (
+                                  <div key={item.id} className="group/item flex items-center gap-2 py-1.5 hover:bg-gray-700/30 rounded px-1 -mx-1 transition-colors">
+                                    <button onClick={() => handleToggleChecklistItem(cl.id, item.id)} className="flex-shrink-0">
+                                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${item.checked ? 'bg-lime-500 border-lime-500' : 'border-gray-600 hover:border-lime-500'}`}>
+                                        {item.checked && <Check size={9} className="text-gray-900" />}
+                                      </div>
+                                    </button>
+                                    <span className={`flex-1 text-sm min-w-0 ${item.checked ? 'line-through text-gray-600' : 'text-gray-300'}`}>{item.text}</span>
+                                    {(itemMember || item.deadline) && (
+                                      <div className="flex items-center gap-1.5 text-xs text-gray-600 group-hover/item:hidden">
+                                        {itemMember && <span>{itemMember.name?.split(' ')[0]}</span>}
+                                        {item.deadline && <span>{new Date(item.deadline + 'T12:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>}
+                                      </div>
+                                    )}
+                                    <div className="hidden group-hover/item:flex items-center gap-1.5">
+                                      <select value={item.responsibleId || ''} onChange={e => handleUpdateChecklistItem(cl.id, item.id, { responsibleId: e.target.value ? (parseInt(e.target.value) || e.target.value) : '' })} className="text-xs bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-500 focus:outline-none focus:border-lime-500" title="Responsável">
+                                        <option value="">Resp.</option>
+                                        {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                      </select>
+                                      <input type="date" value={item.deadline || ''} onChange={e => handleUpdateChecklistItem(cl.id, item.id, { deadline: e.target.value })} className="text-xs bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-500 focus:outline-none focus:border-lime-500" />
+                                      <button onClick={() => handleDeleteChecklistItem(cl.id, item.id)} className="p-0.5 hover:bg-red-900/30 rounded"><X size={10} className="text-gray-600 hover:text-red-400" /></button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              <div className="flex gap-2 mt-2 pt-2 border-t border-gray-700/30">
+                                <input
+                                  value={checklistInputs[cl.id] || ''}
+                                  onChange={e => setChecklistInputs(prev => ({ ...prev, [cl.id]: e.target.value }))}
+                                  onKeyDown={e => { if (e.key === 'Enter' && (checklistInputs[cl.id] || '').trim()) { handleAddChecklistItem(cl.id, checklistInputs[cl.id]); setChecklistInputs(prev => ({ ...prev, [cl.id]: '' })); } }}
+                                  placeholder="Adicionar item..."
+                                  className="flex-1 text-sm px-2 py-1 bg-transparent border-b border-gray-700/50 text-gray-300 placeholder-gray-700 focus:outline-none focus:border-lime-500"
+                                />
+                                <button onClick={() => { if ((checklistInputs[cl.id] || '').trim()) { handleAddChecklistItem(cl.id, checklistInputs[cl.id]); setChecklistInputs(prev => ({ ...prev, [cl.id]: '' })); } }} className="px-2 py-1 text-lime-500 hover:bg-lime-500/10 rounded transition-colors"><Plus size={13} /></button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              /* ─── Cronograma view ─── */
+              <div className="px-6 py-4 pb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <CalendarRange size={13} className="text-gray-500" />
+                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cronograma</span>
+                  </div>
+                  <button onClick={() => { setEditingPhase(null); setPhaseForm({ name: '', deadline: '', description: '' }); setIsPhaseModalOpen(true); }} className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 px-2 py-1 rounded-lg hover:bg-gray-800 transition-colors">
+                    <Plus size={12} /> Fase
+                  </button>
+                </div>
+                {sortedPhases.length === 0 ? (
+                  <p className="text-xs text-gray-700 text-center py-3">Sem fases cadastradas.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {sortedPhases.map(phase => {
+                      const isCurrent = phase.id === currentPhase?.id;
+                      const isPhaseOverdue = phase.deadline && !phase.completed && new Date(phase.deadline + 'T23:59') < today;
+                      return (
+                        <div key={phase.id} className={`group flex items-center gap-3 p-2.5 rounded-xl transition-all ${isCurrent ? 'bg-amber-900/15 border border-amber-700/40' : phase.completed ? 'opacity-50 bg-gray-800/20' : 'bg-gray-800/40 hover:bg-gray-800/70'}`}>
+                          <button onClick={() => handleTogglePhaseComplete(phase.id)} className="flex-shrink-0">
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${phase.completed ? 'bg-emerald-500 border-emerald-500' : isCurrent ? 'border-amber-400' : 'border-gray-600 hover:border-lime-500'}`}>
+                              {phase.completed && <Check size={10} className="text-white" />}
+                              {isCurrent && !phase.completed && <div className="w-2 h-2 rounded-full bg-amber-400" />}
+                            </div>
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-sm ${phase.completed ? 'line-through text-gray-600' : isCurrent ? 'text-amber-300 font-medium' : 'text-gray-300'}`}>{phase.name}</span>
+                              {isCurrent && <span className="text-xs text-amber-600 font-medium flex-shrink-0">← atual</span>}
+                            </div>
+                            {phase.description && <p className="text-xs text-gray-600 truncate mt-0.5">{phase.description}</p>}
+                          </div>
+                          {phase.deadline && (
+                            <span className={`text-xs flex-shrink-0 font-medium ${isPhaseOverdue ? 'text-red-400' : phase.completed ? 'text-gray-600' : 'text-gray-500'}`}>
+                              {new Date(phase.deadline + 'T12:00').toLocaleDateString('pt-BR')}
+                            </span>
+                          )}
+                          <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => { setEditingPhase(phase); setPhaseForm({ name: phase.name, deadline: phase.deadline || '', description: phase.description || '' }); setIsPhaseModalOpen(true); }} className="p-1 hover:bg-gray-700 rounded"><Edit2 size={11} className="text-gray-500" /></button>
+                            <button onClick={() => handleDeletePhase(phase.id)} className="p-1 hover:bg-red-900/30 rounded"><Trash2 size={11} className="text-red-500" /></button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ─── Right column: Comments ─── */}
+          <div className="w-72 flex-shrink-0 flex flex-col border-l border-gray-800">
+            <div className="flex-shrink-0 px-4 py-3 border-b border-gray-800">
+              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                <MessageSquare size={12} /> Comentários
+                {comments.length > 0 && <span className="text-gray-600 font-normal ml-1">({comments.length})</span>}
+              </h3>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+              {[...comments].reverse().map(cm => {
+                const author = getMember(cm.authorId);
+                return (
+                  <div key={cm.id} className="group">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-shrink-0 mt-0.5">
+                        {author?.photo
+                          ? <img src={author.photo} alt="" className="w-6 h-6 rounded-full object-cover" />
+                          : <div className="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center"><span className="text-gray-400 text-[10px] font-bold">{author?.name?.[0] || '?'}</span></div>
+                        }
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-baseline gap-1.5 mb-0.5">
+                          <span className="text-xs font-semibold text-gray-300">{author?.name || 'Desconhecido'}</span>
+                          <span className="text-[10px] text-gray-600">{formatDateTime(cm.createdAt)}</span>
+                          {cm.editedAt && <span className="text-[10px] text-gray-700 italic">editado</span>}
+                        </div>
+                        {editingCommentId === cm.id ? (
+                          <div className="space-y-1.5">
+                            <textarea
+                              value={editingCommentText}
+                              onChange={e => setEditingCommentText(e.target.value)}
+                              autoFocus
+                              rows={2}
+                              className="w-full text-xs px-2 py-1.5 bg-gray-800 border border-lime-500 rounded-lg text-gray-300 resize-none focus:outline-none"
+                            />
+                            <div className="flex gap-2">
+                              <button onClick={() => handleSaveEditComment(cm.id)} className="text-[10px] text-lime-400 hover:text-lime-300">salvar</button>
+                              <button onClick={() => setEditingCommentId(null)} className="text-[10px] text-gray-600 hover:text-gray-400">cancelar</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-400 leading-relaxed break-words">{cm.text}</p>
+                        )}
+                        {editingCommentId !== cm.id && (
+                          <div className="flex gap-2 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => { setEditingCommentId(cm.id); setEditingCommentText(cm.text); }} className="text-[10px] text-gray-600 hover:text-gray-300">editar</button>
+                            <button onClick={() => handleDeleteComment(cm.id)} className="text-[10px] text-gray-600 hover:text-red-400">excluir</button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {comments.length === 0 && (
+                <p className="text-xs text-gray-700 text-center py-6">Nenhum comentário ainda.</p>
+              )}
+            </div>
+            <div className="flex-shrink-0 px-4 py-3 border-t border-gray-800 space-y-2">
+              <select
+                value={commentAuthorId}
+                onChange={e => setCommentAuthorId(e.target.value)}
+                className="w-full text-xs px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-400 focus:outline-none focus:border-lime-500"
+              >
+                <option value="">De: selecionar membro</option>
+                {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+              <div className="flex gap-2">
+                <textarea
+                  value={commentText}
+                  onChange={e => setCommentText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddComment(); } }}
+                  placeholder="Escrever comentário..."
+                  rows={2}
+                  className="flex-1 text-xs px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-300 resize-none focus:outline-none focus:border-lime-500 placeholder-gray-600"
+                />
+                <button
+                  onClick={handleAddComment}
+                  disabled={!commentText.trim() || !commentAuthorId}
+                  className="px-2.5 py-1.5 bg-lime-500/20 hover:bg-lime-500/30 text-lime-400 rounded-lg text-xs disabled:opacity-40 flex-shrink-0 self-end"
+                >
+                  Comentar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Task Modal */}
+        <Modal isOpen={isTaskModalOpen} onClose={() => setIsTaskModalOpen(false)} title={editingTask ? 'Editar Tarefa' : 'Nova Tarefa'}>
+          <div className="space-y-4">
+            <Input label="Nome da Tarefa" value={taskForm.name} onChange={v => setTaskForm({...taskForm, name: v})} placeholder="Ex: Criar identidade visual" />
+            <div>
+              <label className="text-sm text-gray-300 mb-1 block">Descrição</label>
+              <textarea value={taskForm.description} onChange={e => setTaskForm({...taskForm, description: e.target.value})} placeholder="Detalhes da tarefa..." className="w-full p-3 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 placeholder-gray-500 focus:border-lime-500 focus:outline-none resize-none" rows={3} />
+            </div>
+            <Select label="Responsável" value={taskForm.responsibleId?.toString() || ''} onChange={v => setTaskForm({...taskForm, responsibleId: v ? (parseInt(v) || v) : ''})} options={[{ value: '', label: 'Sem responsável' }, ...teamMembers.map(m => ({ value: m.id.toString(), label: m.name }))]} />
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Prazo" type="date" value={taskForm.deadline} onChange={v => setTaskForm({...taskForm, deadline: v})} />
+              <Input label="Horas Estimadas" type="number" value={taskForm.estimatedHours || ''} onChange={v => setTaskForm({...taskForm, estimatedHours: parseFloat(v) || 0})} placeholder="Ex: 4" />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 mt-6">
+            <Button variant="secondary" onClick={() => setIsTaskModalOpen(false)}>Cancelar</Button>
+            <Button onClick={handleSaveTask}>{editingTask ? 'Salvar' : 'Criar Tarefa'}</Button>
+          </div>
+        </Modal>
+
+        {/* Phase Modal */}
+        <Modal isOpen={isPhaseModalOpen} onClose={() => setIsPhaseModalOpen(false)} title={editingPhase ? 'Editar Fase' : 'Nova Fase do Cronograma'}>
+          <div className="space-y-4">
+            <Input label="Nome da Fase" value={phaseForm.name} onChange={v => setPhaseForm({...phaseForm, name: v})} placeholder="Ex: Imersão, Criação, Entrega..." />
+            <Input label="Prazo de Entrega" type="date" value={phaseForm.deadline} onChange={v => setPhaseForm({...phaseForm, deadline: v})} />
+            <div>
+              <label className="text-sm text-gray-300 mb-1 block">Descrição (opcional)</label>
+              <textarea value={phaseForm.description} onChange={e => setPhaseForm({...phaseForm, description: e.target.value})} placeholder="O que será entregue nesta fase..." className="w-full p-3 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 placeholder-gray-500 focus:border-lime-500 focus:outline-none resize-none" rows={3} />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 mt-6">
+            <Button variant="secondary" onClick={() => setIsPhaseModalOpen(false)}>Cancelar</Button>
+            <Button onClick={handleSavePhase}>{editingPhase ? 'Salvar' : 'Adicionar Fase'}</Button>
+          </div>
+        </Modal>
+
       </div>
-
-      {/* Task Modal */}
-      <Modal isOpen={isTaskModalOpen} onClose={() => setIsTaskModalOpen(false)} title={editingTask ? 'Editar Tarefa' : 'Nova Tarefa'}>
-        <div className="space-y-4">
-          <Input label="Nome da Tarefa" value={taskForm.name} onChange={v => setTaskForm({...taskForm, name: v})} placeholder="Ex: Criar identidade visual" />
-          <div>
-            <label className="text-sm text-gray-300 mb-1 block">Descrição</label>
-            <textarea
-              value={taskForm.description}
-              onChange={e => setTaskForm({...taskForm, description: e.target.value})}
-              placeholder="Detalhes da tarefa..."
-              className="w-full p-3 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 placeholder-gray-500 focus:border-lime-500 focus:outline-none resize-none"
-              rows={3}
-            />
-          </div>
-          <Select
-            label="Responsável"
-            value={taskForm.responsibleId?.toString() || ''}
-            onChange={v => setTaskForm({...taskForm, responsibleId: v ? (parseInt(v) || v) : ''})}
-            options={[
-              { value: '', label: 'Sem responsável' },
-              ...teamMembers.map(m => ({ value: m.id.toString(), label: m.name }))
-            ]}
-          />
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="Prazo" type="date" value={taskForm.deadline} onChange={v => setTaskForm({...taskForm, deadline: v})} />
-            <Input label="Horas Estimadas" type="number" value={taskForm.estimatedHours || ''} onChange={v => setTaskForm({...taskForm, estimatedHours: parseFloat(v) || 0})} placeholder="Ex: 4" />
-          </div>
-        </div>
-        <div className="flex justify-end gap-3 mt-6">
-          <Button variant="secondary" onClick={() => setIsTaskModalOpen(false)}>Cancelar</Button>
-          <Button onClick={handleSaveTask}>{editingTask ? 'Salvar' : 'Criar Tarefa'}</Button>
-        </div>
-      </Modal>
-
-      {/* Phase Modal */}
-      <Modal isOpen={isPhaseModalOpen} onClose={() => setIsPhaseModalOpen(false)} title={editingPhase ? 'Editar Fase' : 'Nova Fase do Cronograma'}>
-        <div className="space-y-4">
-          <Input label="Nome da Fase" value={phaseForm.name} onChange={v => setPhaseForm({...phaseForm, name: v})} placeholder="Ex: Imersão, Criação, Entrega..." />
-          <Input label="Prazo de Entrega" type="date" value={phaseForm.deadline} onChange={v => setPhaseForm({...phaseForm, deadline: v})} />
-          <div>
-            <label className="text-sm text-gray-300 mb-1 block">Descrição (opcional)</label>
-            <textarea
-              value={phaseForm.description}
-              onChange={e => setPhaseForm({...phaseForm, description: e.target.value})}
-              placeholder="O que será entregue nesta fase..."
-              className="w-full p-3 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 placeholder-gray-500 focus:border-lime-500 focus:outline-none resize-none"
-              rows={3}
-            />
-          </div>
-        </div>
-        <div className="flex justify-end gap-3 mt-6">
-          <Button variant="secondary" onClick={() => setIsPhaseModalOpen(false)}>Cancelar</Button>
-          <Button onClick={handleSavePhase}>{editingPhase ? 'Salvar' : 'Adicionar Fase'}</Button>
-        </div>
-      </Modal>
     </div>
   );
 };
@@ -5154,13 +5094,10 @@ const ProjectDetailPanel = ({ project, data, updateData, onClose }) => {
 const ProjectsView = ({ data, updateData }) => {
   const [draggedCard, setDraggedCard] = useState(null);
   const [dragOverColumn, setDragOverColumn] = useState(null);
-  const [isCardModalOpen, setIsCardModalOpen] = useState(false);
+  const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
   const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
-  const [editingCard, setEditingCard] = useState(null);
+  const [newProjectForm, setNewProjectForm] = useState({ name: "", columnId: "" });
   const [editingColumn, setEditingColumn] = useState(null);
-  const [cardForm, setCardForm] = useState({
-    name: "", description: "", clientId: "", responsibleId: "", columnId: "", deadline: "", estimatedHours: 0
-  });
   const [columnForm, setColumnForm] = useState({ name: "", color: "#8b5cf6", icon: "clipboard" });
   const [selectedProject, setSelectedProject] = useState(null);
   const [hoveredCardId, setHoveredCardId] = useState(null);
@@ -5229,43 +5166,22 @@ const ProjectsView = ({ data, updateData }) => {
 
   const getProjectTasks = (cardId) => allTasks.filter(t => t.projectId === cardId);
 
-  // CRUD de Cards
-  const handleSaveCard = () => {
-    if (!cardForm.name || !cardForm.columnId) return;
-
-    if (editingCard) {
-      const updatedCards = cards.map(c =>
-        c.id === editingCard.id ? { ...c, ...cardForm, id: c.id } : c
-      );
-      updateData(prev => ({
-        ...prev,
-        projects: { ...prev.projects, cards: updatedCards }
-      }));
-    } else {
-      const newCard = { ...cardForm, id: Date.now(), createdAt: new Date().toISOString(), checklists: [], schedulePhases: [] };
-      updateData(prev => ({
-        ...prev,
-        projects: { ...prev.projects, cards: [...(prev.projects?.cards || []), newCard] }
-      }));
-    }
-
-    setIsCardModalOpen(false);
-    setEditingCard(null);
-    setCardForm({ name: "", description: "", clientId: "", responsibleId: "", columnId: "", deadline: "", estimatedHours: 0 });
-  };
-
-  const handleEditCard = (card) => {
-    setEditingCard(card);
-    setCardForm({
-      name: card.name || "",
-      description: card.description || "",
-      clientId: card.clientId || "",
-      responsibleId: card.responsibleId || "",
-      columnId: card.columnId || "",
-      deadline: card.deadline || "",
-      estimatedHours: card.estimatedHours || 0,
-    });
-    setIsCardModalOpen(true);
+  // Criação de novo projeto
+  const handleCreateProject = () => {
+    if (!newProjectForm.name || !newProjectForm.columnId) return;
+    const newCard = {
+      id: Date.now(), createdAt: new Date().toISOString(),
+      name: newProjectForm.name, columnId: newProjectForm.columnId,
+      description: '', clientId: '', responsibleId: '',
+      deadline: '', estimatedHours: 0,
+      checklists: [], schedulePhases: [],
+    };
+    updateData(prev => ({
+      ...prev,
+      projects: { ...prev.projects, cards: [...(prev.projects?.cards || []), newCard] }
+    }));
+    setIsNewProjectModalOpen(false);
+    setNewProjectForm({ name: "", columnId: "" });
   };
 
   const handleDeleteCard = (cardId) => {
@@ -5435,13 +5351,6 @@ const ProjectsView = ({ data, updateData }) => {
                           <h4 className="font-medium text-gray-200 text-sm flex-1 leading-tight">{card.name}</h4>
                           <div className="flex gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
                             <button
-                              onClick={() => handleEditCard(card)}
-                              className="p-1 hover:bg-gray-700 rounded"
-                              title="Editar projeto"
-                            >
-                              <Edit2 size={12} className="text-gray-500" />
-                            </button>
-                            <button
                               onClick={() => handleDeleteCard(card.id)}
                               className="p-1 hover:bg-red-900/50 rounded"
                               title="Excluir projeto"
@@ -5533,9 +5442,8 @@ const ProjectsView = ({ data, updateData }) => {
                 {/* Add card button */}
                 <button
                   onClick={() => {
-                    setEditingCard(null);
-                    setCardForm({ name: "", description: "", clientId: "", responsibleId: "", columnId: column.id, deadline: "", estimatedHours: 0 });
-                    setIsCardModalOpen(true);
+                    setNewProjectForm({ name: "", columnId: column.id });
+                    setIsNewProjectModalOpen(true);
                   }}
                   className="m-2 p-2 border-2 border-dashed border-gray-700 rounded-xl text-gray-500 hover:border-gray-600 hover:text-gray-400 transition-colors flex items-center justify-center gap-2"
                 >
@@ -5556,77 +5464,26 @@ const ProjectsView = ({ data, updateData }) => {
         </div>
       </div>
 
-      {/* Modal Novo/Editar Card */}
-      <Modal isOpen={isCardModalOpen} onClose={() => setIsCardModalOpen(false)} title={editingCard ? "Editar Projeto" : "Novo Projeto"}>
+      {/* Modal Novo Projeto */}
+      <Modal isOpen={isNewProjectModalOpen} onClose={() => setIsNewProjectModalOpen(false)} title="Novo Projeto">
         <div className="space-y-4">
           <Input
             label="Nome do Projeto"
-            value={cardForm.name}
-            onChange={(v) => setCardForm({...cardForm, name: v})}
+            value={newProjectForm.name}
+            onChange={(v) => setNewProjectForm({...newProjectForm, name: v})}
             placeholder="Ex: Identidade Visual - Cliente X"
           />
-
-          <div>
-            <label className="text-sm text-gray-300 mb-1 block">Descrição</label>
-            <textarea
-              value={cardForm.description}
-              onChange={(e) => setCardForm({...cardForm, description: e.target.value})}
-              placeholder="Detalhes do projeto..."
-              className="w-full p-3 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 placeholder-gray-500 focus:border-lime-500 focus:outline-none resize-none"
-              rows={3}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <Select
-              label="Coluna"
-              value={cardForm.columnId}
-              onChange={(v) => setCardForm({...cardForm, columnId: v})}
-              options={columns.map(c => ({ value: c.id, label: c.name }))}
-            />
-            <Input
-              label="Prazo"
-              type="date"
-              value={cardForm.deadline}
-              onChange={(v) => setCardForm({...cardForm, deadline: v})}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <Input
-              label="Horas Estimadas"
-              type="number"
-              value={cardForm.estimatedHours || ""}
-              onChange={(v) => setCardForm({...cardForm, estimatedHours: parseFloat(v) || 0})}
-              placeholder="Ex: 40"
-            />
-            <Select
-              label="Responsável"
-              value={cardForm.responsibleId?.toString() || ""}
-              onChange={(v) => setCardForm({...cardForm, responsibleId: v ? (parseInt(v) || v) : ""})}
-              options={[
-                { value: "", label: "Nenhum responsável" },
-                ...teamMembers.map(m => ({ value: m.id.toString(), label: m.name }))
-              ]}
-            />
-          </div>
-
           <Select
-            label="Vincular a Cliente"
-            value={cardForm.clientId?.toString() || ""}
-            onChange={(v) => setCardForm({...cardForm, clientId: v ? (parseInt(v) || v) : ""})}
-            options={[
-              { value: "", label: "Nenhum cliente" },
-              ...clients.map(c => ({
-                value: c.id.toString(),
-                label: `${c.name}${c.company ? ` - ${c.company}` : ''}`
-              }))
-            ]}
+            label="Coluna"
+            value={newProjectForm.columnId}
+            onChange={(v) => setNewProjectForm({...newProjectForm, columnId: v})}
+            options={columns.map(c => ({ value: c.id, label: c.name }))}
           />
         </div>
-        <div className="flex justify-end gap-3 mt-6">
-          <Button variant="secondary" onClick={() => setIsCardModalOpen(false)}>Cancelar</Button>
-          <Button onClick={handleSaveCard}>{editingCard ? "Salvar" : "Criar Projeto"}</Button>
+        <p className="text-xs text-gray-600 mt-3">Os demais dados (cliente, responsável, prazo, etc.) podem ser preenchidos ao abrir o projeto.</p>
+        <div className="flex justify-end gap-3 mt-4">
+          <Button variant="secondary" onClick={() => setIsNewProjectModalOpen(false)}>Cancelar</Button>
+          <Button onClick={handleCreateProject}>Criar Projeto</Button>
         </div>
       </Modal>
 
