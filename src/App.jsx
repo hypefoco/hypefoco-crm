@@ -167,11 +167,15 @@ const EMOJI_LIST = [
 
 const checkTeamMember = async (email) => {
   try {
-    const { data, error } = await supabase
+    const queryPromise = supabase
       .from("studio_members")
       .select("owner_user_id, role")
       .eq("member_email", email)
-      .single();
+      .maybeSingle();
+    const timeoutPromise = new Promise((resolve) =>
+      setTimeout(() => resolve({ data: null, error: null }), 5000)
+    );
+    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
     if (error || !data) return null;
     return data;
   } catch {
@@ -312,17 +316,26 @@ const usePersistedState = (key, defaultValue, user) => {
       }
 
       console.log("🔄 Carregando dados para usuário:", user.id);
+      setIsLoading(true);
 
       try {
-        // Primeiro tenta carregar do Supabase
-        const { data: cloudData, error } = await supabase
+        // Primeiro tenta carregar do Supabase (com timeout de 8s)
+        const queryPromise = supabase
           .from('crm_data')
           .select('data')
           .eq('user_id', user.id)
-          .maybeSingle(); // Usa maybeSingle em vez de single para não dar erro se não existir
+          .maybeSingle();
+        const timeoutPromise = new Promise((resolve) =>
+          setTimeout(() => resolve({ data: null, error: new Error("timeout") }), 8000)
+        );
+        const { data: cloudData, error } = await Promise.race([queryPromise, timeoutPromise]);
 
-        if (error) {
+        if (error && error.message !== "timeout") {
           console.error("Erro ao buscar do Supabase:", error);
+          throw error;
+        }
+        if (error?.message === "timeout") {
+          console.warn("⚠️ Timeout ao buscar dados da nuvem, usando fallback local");
           throw error;
         }
 
@@ -8648,7 +8661,7 @@ CREATE POLICY "team_member_data_access" ON crm_data FOR ALL
     EXISTS (
       SELECT 1 FROM studio_members
       WHERE studio_members.member_email = (auth.jwt()->>'email')
-      AND studio_members.owner_user_id = crm_data.user_id
+      AND studio_members.owner_user_id = crm_data.user_id::text
     )
   );`}</pre>
           <div className="flex gap-3 items-start">
