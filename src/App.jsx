@@ -165,19 +165,20 @@ const EMOJI_LIST = [
   "😀","😃","😄","😁","😆","😂","🤣","😊","😇","🙂","😉","😌","😍","🥰","😘","😋","😛","😝","😜","🤪","🤓","😎","🤩","🥳","😏","😒","😞","😟","😕","😣","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","😱","😨","😰","😥","🤔","🤗","🫡","🤭","🤥","😶","😐","😑","😬","🙄","😯","😮","😲","🥱","😴","🤢","🤮","🤧","😷","🤒","🤕","🤑","🤠","😈","👿","💀","🤖","🎃","👍","👎","✌️","🤞","🤘","👌","👈","👉","👆","👇","👏","🙌","🙏","💪","🦾","🤝","✍️","💅","💃","🕺","🧑‍💻","👨‍💻","👩‍💻","🧑‍🎨","👨‍🎨","👩‍🎨","🧑‍💼","👨‍💼","👩‍💼","🌟","⭐","💫","✨","🔥","💥","❄️","🌊","🌈","☀️","🌙","⚡","🎯","🎮","🎲","🎨","🎭","🎬","🎤","🎧","🎼","🎹","🎸","🏆","🥇","🏅","💝","💖","❤️","🧡","💛","💚","💙","💜","🖤","💔","💋","🌺","🌸","🌼","🌻","🌹","🌷","🌿","🍀","🍁","🍃","🐶","🐱","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🐔","🐧","🦆","🦅","🦉","🐺","🐴","🦄","🐝","🦋","🐌","🐞","🐟","🐬","🐳","🦈","🐊","🐘","🦒","🦘","🐕","🐩","🐈","🍎","🍊","🍋","🍇","🍓","🫐","🍈","🍒","🍑","🥭","🍍","🥥","🥝","🍅","🫒","🥑","🍆","🥦","🥕","🌽","🌶️","🧄","🧅","🥔","🍠","🥐","🥖","🥨","🧀","🥚","🍳","🧈","🥞","🧇","🥓","🥩","🍗","🍖","🌭","🍔","🍟","🍕","🫓","🥪","🥙","🧆","🌮","🌯","🫔","🥗","🍱","🍘","🍙","🍚","🍛","🍜","🍝","🍣","🍤","🍙","🥟","🦪","🍦","🍧","🍨","🍩","🍪","🎂","🍰","🧁","🥧","🍫","🍬","🍭","🍮","🍯","🍵","☕","🍺","🍻","🥂","🍷","🥃","🍸","🍹","🧃","🥤","🧋","💻","📱","⌨️","🖥️","🖨️","🖱️","🖲️","💾","💿","📀","📷","📸","📹","🎥","📽️","🎞️","📞","☎️","📟","📠","📺","📻","🧭","⏰","⌚","📡","🔋","🔌","💡","🔦","🕯️","🪔","🧯","🛢️","💰","💵","💳","💎","⚖️","🔧","🔨","⛏️","⚙️","🗜️","🔩","🪛","🔫","🧲","💣","🪓","🔪","🗡️","⚔️","🛡️","🚪","🪟","🪞","🛏️","🛋️","🚽","🚿","🛁","🧴","🧷","🧹","🧺","🧻","🧼","🫧","🪥","🪒","🧽","🪣","🧰","🪤","🪣","📦","📫","📪","📬","📭","📮","📯","📢","📣","📜","📄","📃","📑","🗒️","🗓️","📆","📅","📇","🗃️","🗳️","🗂️","📋","📁","📂","🗂️","🗄️","🗑️","📊","📈","📉","🗺️","📍","📌","📎","🖇️","📏","📐","✂️","🪡","🧵","🪢","🖊️","🖋️","✒️","🖌️","🖍️","📝","✏️","🔍","🔎","🔐","🔏","🔓","🔒","🗝️","🔑",
 ];
 
-const checkTeamMember = async (email) => {
+const checkProfile = async (email) => {
   try {
     const queryPromise = supabase
-      .from("studio_members")
-      .select("owner_user_id, role")
-      .eq("member_email", email)
+      .from("profiles")
+      .select("owner_id, role")
+      .eq("email", email)
+      .not("owner_id", "is", null)
       .maybeSingle();
     const timeoutPromise = new Promise((resolve) =>
       setTimeout(() => resolve({ data: null, error: null }), 5000)
     );
     const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
     if (error || !data) return null;
-    return data;
+    return data; // { owner_id: uuid, role: string }
   } catch {
     return null;
   }
@@ -8450,14 +8451,14 @@ const SettingsView = ({ data, updateData, user }) => {
         : [...(prev.teamMembers || []), saved],
     }));
 
-    // Sync to studio_members table if email provided
+    // Sync to profiles table if email provided
     if (formData.email && user) {
       try {
-        await supabase.from("studio_members").upsert({
-          member_email: formData.email,
-          owner_user_id: user.id,
+        await supabase.from("profiles").upsert({
+          email: formData.email,
+          owner_id: user.id,
           role: formData.role || "designer",
-        }, { onConflict: "member_email" });
+        }, { onConflict: "email" });
       } catch {}
     }
 
@@ -8473,10 +8474,10 @@ const SettingsView = ({ data, updateData, user }) => {
         ...prev,
         teamMembers: (prev.teamMembers || []).filter(m => m.id !== id),
       }));
-      // Remove acesso na tabela studio_members também
+      // Remove acesso na tabela profiles também
       if (member?.email) {
         try {
-          await supabase.from("studio_members").delete().eq("member_email", member.email);
+          await supabase.from("profiles").delete().eq("email", member.email).eq("owner_id", user.id);
         } catch {}
       }
     }
@@ -8626,47 +8627,66 @@ const SettingsView = ({ data, updateData, user }) => {
         <div className="space-y-3 text-sm text-gray-400">
           <div className="flex gap-3 items-start">
             <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">1</span>
-            <p>Cadastre o membro aqui em <strong className="text-gray-200">Equipe Geral</strong> com o e-mail e cargo corretos.</p>
+            <p>Execute o SQL abaixo no <strong className="text-gray-200">SQL Editor do Supabase</strong> para criar a tabela de perfis e as políticas de segurança (apenas na primeira vez):</p>
           </div>
-          <div className="flex gap-3 items-start">
-            <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
-            <p>No painel do Supabase, vá em <strong className="text-gray-200">Authentication → Users</strong> e convide o e-mail do membro (ele receberá um link para criar a senha).</p>
-          </div>
-          <div className="flex gap-3 items-start">
-            <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
-            <p>Execute o SQL abaixo no <strong className="text-gray-200">SQL Editor do Supabase</strong> para criar a tabela de controle de acesso (apenas na primeira vez):</p>
-          </div>
-          <pre className="bg-gray-900 rounded-lg p-3 text-xs text-gray-300 overflow-x-auto border border-gray-700">{`-- Tabela de membros da equipe
-CREATE TABLE IF NOT EXISTS studio_members (
+          <pre className="bg-gray-900 rounded-lg p-3 text-xs text-gray-300 overflow-x-auto border border-gray-700">{`-- Tabela de perfis vinculada ao auth.users
+CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  member_email TEXT NOT NULL UNIQUE,
-  owner_user_id TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
   role TEXT NOT NULL DEFAULT 'designer',
+  owner_id UUID REFERENCES auth.users(id),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE studio_members ENABLE ROW LEVEL SECURITY;
--- Membro pode ler seu próprio registro
-CREATE POLICY "member_read_own" ON studio_members FOR SELECT
-  USING (member_email = (auth.jwt()->>'email'));
--- Dono gerencia todos os membros do seu estúdio
-CREATE POLICY "owner_manage" ON studio_members FOR ALL
-  USING (owner_user_id = (auth.uid())::text);`}</pre>
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+-- Membro lê o próprio perfil (para saber seu cargo e estúdio)
+CREATE POLICY "profile_read" ON public.profiles FOR SELECT
+  USING (email = (auth.jwt()->>'email') OR owner_id = auth.uid());
+
+-- Dono insere membros da equipe
+CREATE POLICY "profile_insert" ON public.profiles FOR INSERT
+  WITH CHECK (owner_id = auth.uid());
+
+-- Dono atualiza cargo dos membros
+CREATE POLICY "profile_update" ON public.profiles FOR UPDATE
+  USING (owner_id = auth.uid())
+  WITH CHECK (owner_id = auth.uid());
+
+-- Dono remove membros da equipe
+CREATE POLICY "profile_delete" ON public.profiles FOR DELETE
+  USING (owner_id = auth.uid());`}</pre>
           <div className="flex gap-3 items-start">
-            <span className="w-6 h-6 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">4</span>
-            <p><strong className="text-orange-300">ESSENCIAL — execute também este SQL</strong> para liberar o acesso dos membros aos dados do estúdio (sem isso os dados não aparecem):</p>
+            <span className="w-6 h-6 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
+            <p><strong className="text-orange-300">ESSENCIAL — execute também este SQL</strong> para liberar o acesso dos membros aos dados do estúdio e remover políticas antigas:</p>
           </div>
-          <pre className="bg-gray-900 rounded-lg p-3 text-xs text-gray-300 overflow-x-auto border border-orange-700">{`-- Permite que membros da equipe acessem os dados do estúdio
-CREATE POLICY "team_member_data_access" ON crm_data FOR ALL
+          <pre className="bg-gray-900 rounded-lg p-3 text-xs text-gray-300 overflow-x-auto border border-orange-700">{`-- Remove políticas antigas (se existirem)
+DROP POLICY IF EXISTS "team_member_data_access" ON public.crm_data;
+DROP POLICY IF EXISTS "owner_access" ON public.crm_data;
+
+-- Dono acessa seus próprios dados
+CREATE POLICY "owner_access" ON public.crm_data FOR ALL
+  USING (auth.uid() = user_id);
+
+-- Membros da equipe acessam dados do estúdio (sem cast, tipos corretos)
+CREATE POLICY "team_member_data_access" ON public.crm_data FOR ALL
   USING (
     EXISTS (
-      SELECT 1 FROM studio_members
-      WHERE studio_members.member_email = (auth.jwt()->>'email')
-      AND studio_members.owner_user_id = crm_data.user_id::text
+      SELECT 1 FROM public.profiles
+      WHERE profiles.email = (auth.jwt()->>'email')
+      AND profiles.owner_id = crm_data.user_id
     )
   );`}</pre>
           <div className="flex gap-3 items-start">
+            <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
+            <p>Cadastre o membro aqui em <strong className="text-gray-200">Equipe Geral</strong> com o e-mail e cargo corretos. Isso já registra o acesso no banco.</p>
+          </div>
+          <div className="flex gap-3 items-start">
+            <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">4</span>
+            <p>No painel do Supabase, vá em <strong className="text-gray-200">Authentication → Users</strong> e convide o e-mail do membro (ele receberá um link para criar a senha).</p>
+          </div>
+          <div className="flex gap-3 items-start">
             <span className="w-6 h-6 rounded-full bg-lime-500/20 text-lime-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">5</span>
-            <p>Pronto! O membro faz login com a conta dele e enxerga os dados do estúdio apenas nas abas permitidas pelo cargo. Para alterar o cargo, edite o membro aqui e salve.</p>
+            <p>Pronto! O membro faz login e enxerga apenas os dados e abas permitidas pelo cargo. Para alterar o cargo, edite o membro aqui e salve.</p>
           </div>
         </div>
       </Card>
@@ -11194,13 +11214,13 @@ const PautasView = ({ data, updateData }) => {
 // Main App
 export default function HypefocoCRM() {
   const [user, setUser] = useState(null);
-  const [memberInfo, setMemberInfo] = useState(null); // { owner_user_id, role } if team member
+  const [profile, setProfile] = useState(null); // { owner_id: uuid, role: string } se for membro da equipe
   const [authLoading, setAuthLoading] = useState(true);
   const [activeView, setActiveView] = useState("home");
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  // Use the studio owner's user_id for data if this is a team member login
-  const effectiveUser = memberInfo ? { ...user, id: memberInfo.owner_user_id } : user;
+  // Membro da equipe usa o user_id do dono para carregar os dados do estúdio
+  const effectiveUser = profile?.owner_id ? { ...user, id: profile.owner_id } : user;
   const [data, updateData, isLoading, saveStatus] = usePersistedState(STORAGE_KEY, initialData, effectiveUser);
 
   // Verificar sessão ao carregar
@@ -11211,8 +11231,8 @@ export default function HypefocoCRM() {
       const u = session?.user ?? null;
       setUser(u);
       if (u) {
-        const info = await checkTeamMember(u.email).catch(() => null);
-        setMemberInfo(info);
+        const info = await checkProfile(u.email).catch(() => null);
+        setProfile(info);
       }
       setAuthLoading(false);
     };
@@ -11222,10 +11242,10 @@ export default function HypefocoCRM() {
       const u = session?.user ?? null;
       setUser(u);
       if (u) {
-        const info = await checkTeamMember(u.email).catch(() => null);
-        setMemberInfo(info);
+        const info = await checkProfile(u.email).catch(() => null);
+        setProfile(info);
       } else {
-        setMemberInfo(null);
+        setProfile(null);
       }
     });
     return () => subscription.unsubscribe();
@@ -11234,18 +11254,18 @@ export default function HypefocoCRM() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUser(null);
-    setMemberInfo(null);
+    setProfile(null);
   };
 
   // Redirecionar para primeira aba permitida quando o cargo é carregado
   useEffect(() => {
-    if (memberInfo?.role) {
-      const allowed = ROLE_TABS[memberInfo.role] || [];
+    if (profile?.role) {
+      const allowed = ROLE_TABS[profile.role] || [];
       if (allowed.length > 0 && !allowed.includes(activeView)) {
         setActiveView(allowed[0]);
       }
     }
-  }, [memberInfo?.role]);
+  }, [profile?.role]);
 
   if (authLoading) {
     return (
@@ -11282,7 +11302,7 @@ export default function HypefocoCRM() {
 
   return (
     <div className="min-h-screen bg-gray-950 flex">
-      <Sidebar activeView={activeView} setActiveView={setActiveView} isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} user={user} onLogout={handleLogout} saveStatus={saveStatus} memberRole={memberInfo?.role ?? null} />
+      <Sidebar activeView={activeView} setActiveView={setActiveView} isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} user={user} onLogout={handleLogout} saveStatus={saveStatus} memberRole={profile?.role ?? null} />
       <main className="flex-1 p-4 md:p-8 overflow-auto">{renderView()}</main>
     </div>
   );
